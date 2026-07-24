@@ -44,6 +44,16 @@
         .btn-tree { background-color: #27ae60; } 
         .btn-house { background-color: #d35400; } 
 
+        .tabs-bar { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+        .tab-btn { flex: 1; min-width: 140px; padding: 12px 15px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; background: #dfe6e9; color: #2c3e50; box-shadow: 0 2px 4px rgba(0,0,0,0.15); transition: 0.2s; }
+        .tab-btn:hover { background: #ced6e0; }
+        .tab-btn.active { background: #9b59b6; color: white; }
+        .tab-btn#tabBuildBtn.active { background: #2980b9; }
+        .tab-btn.sound-btn { flex: 0 0 auto; min-width: 60px; background: #2c3e50; color: white; }
+        .tab-panel { display: none; }
+        .tab-panel.open { display: block; animation: slideDown 0.2s ease; }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
         #goals-panel { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 6px solid #9b59b6; }
         .goals-container { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
         .goal-item { background: #f4f6f7; padding: 10px 15px; border-radius: 5px; font-size: 13px; font-weight: 500; color: #2c3e50; border: 1px solid #bdc3c7; flex: 1; min-width: 200px;}
@@ -112,8 +122,15 @@
         </div>
     </div>
 
+    <!-- SEKME ÇUBUĞU -->
+    <div class="tabs-bar">
+        <button class="tab-btn" id="tabGoalsBtn" onclick="toggleTab('goals')">🎯 Görevler</button>
+        <button class="tab-btn" id="tabBuildBtn" onclick="toggleTab('build')">🏗️ Santral Kur</button>
+        <button class="tab-btn sound-btn" id="soundToggleBtn" onclick="toggleSound()">🔊</button>
+    </div>
+
     <!-- HEDEFLER PANELİ (ÇOKLU) -->
-    <div id="goals-panel">
+    <div id="goals-panel" class="tab-panel">
         <div style="width: 100%; font-size: 16px; font-weight: bold; color: #8e44ad; border-bottom: 2px solid #ecf0f1; padding-bottom: 5px;">🎯 GÜNLÜK VE GENEL HEDEFLER</div>
         <div class="goals-container" id="daily-goals-container">
             <!-- Dinamik görevler buraya gelecek -->
@@ -125,45 +142,47 @@
 
     <div id="advisor-message" class="danger-advisor">🚨 Danışman: Şehrin enerjisi kesik. Hemen bütçene uygun bir santral kurmalısın. İnsanların evleri şu an karanlıkta!</div>
 
-    <div class="input-area" style="background: #fdfefe; border: 2px solid #bdc3c7;">
-        <div class="input-row" style="margin-bottom:0; justify-content: space-between;">
-            <div style="display:flex; gap:15px; align-items: center;">
-                <label><b>🗺️ Arazi Genişlet (Satın Al):</b></label>
-                <select id="landBuySelect">
-                    <option value="city">🏙️ Şehir İçi (+50 ha) - 20.000 💰</option>
-                    <option value="rural">🌾 Kırsal Alan (+50 ha) - 10.000 💰</option>
-                    <option value="forest">🌲 Orman (+50 ha) - 5.000 💰</option>
-                </select>
-                <button class="build-btn" style="background:#27ae60; color:white;" onclick="buyLand()">Satın Al</button>
+    <div id="build-panel" class="tab-panel">
+        <div class="input-area" style="background: #fdfefe; border: 2px solid #bdc3c7;">
+            <div class="input-row" style="margin-bottom:0; justify-content: space-between;">
+                <div style="display:flex; gap:15px; align-items: center;">
+                    <label><b>🗺️ Arazi Genişlet (Satın Al):</b></label>
+                    <select id="landBuySelect">
+                        <option value="city">🏙️ Şehir İçi (+50 ha) - 20.000 💰</option>
+                        <option value="rural">🌾 Kırsal Alan (+50 ha) - 10.000 💰</option>
+                        <option value="forest">🌲 Orman (+50 ha) - 5.000 💰</option>
+                    </select>
+                    <button class="build-btn" style="background:#27ae60; color:white;" onclick="buyLand()">Satın Al</button>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div class="input-area">
-        <div class="input-row">
-            <label><b>Kapasite / Birim:</b></label>
-            <input type="number" id="capacityInput" value="10" min="1" max="1000" style="width: 80px;" oninput="updateCostPreview()"> 
-            
-            <label style="margin-left: 20px;"><b>Bölge:</b></label>
-            <select id="zoneSelect" onchange="updateCostPreview()">
-                <option value="rural">🌾 Kırsal Alan (Kahverengi, -%10 İletim Kaybı)</option>
-                <option value="city">🏙️ Şehir İçi (Gri, İletim Kaybı Yok)</option>
-                <option value="forest">🌲 Orman Alanı (Yeşil, Sadece Ağaç Dikilebilir)</option>
-            </select>
+        <div class="input-area">
+            <div class="input-row">
+                <label><b>Kapasite / Birim:</b></label>
+                <input type="number" id="capacityInput" value="10" min="1" max="1000" style="width: 80px;" oninput="updateCostPreview()"> 
+                
+                <label style="margin-left: 20px;"><b>Bölge:</b></label>
+                <select id="zoneSelect" onchange="updateCostPreview()">
+                    <option value="rural">🌾 Kırsal Alan (Kahverengi, -%10 İletim Kaybı)</option>
+                    <option value="city">🏙️ Şehir İçi (Gri, İletim Kaybı Yok)</option>
+                    <option value="forest">🌲 Orman Alanı (Yeşil, Sadece Ağaç Dikilebilir)</option>
+                </select>
+            </div>
+            <div id="costPreviewBox">Butonların üzerine gelerek maliyetleri incele.</div>
         </div>
-        <div id="costPreviewBox">Butonların üzerine gelerek maliyetleri incele.</div>
-    </div>
 
-    <div class="controls">
-        <button class="build-btn btn-coal" onmouseenter="showPreview('coal')" onclick="buildPlant('coal')">🏭 Kömür (3.000 💰/MW)</button>
-        <button class="build-btn btn-gas" onmouseenter="showPreview('gas')" onclick="buildPlant('gas')">🔥 Doğalgaz (1.500 💰/MW)</button>
-        <button class="build-btn btn-solar" onmouseenter="showPreview('solar')" onclick="buildPlant('solar')">☀️ Güneş (800 💰/MW)</button>
-        <button class="build-btn btn-wind" onmouseenter="showPreview('wind')" onclick="buildPlant('wind')">🌬️ Rüzgar (1.800 💰/MW)</button>
-        <button class="build-btn btn-geo" onmouseenter="showPreview('geo')" onclick="buildPlant('geo')">🌋 Jeotermal (5.000 💰/MW)</button>
-        <button class="build-btn btn-hydro" onmouseenter="showPreview('hydro')" onclick="buildPlant('hydro')">🌊 Hidrolik (5.000 💰/MW)</button>
-        <button class="build-btn btn-battery" onmouseenter="showPreview('battery')" onclick="buildPlant('battery')">🔋 Depolama (1.500 💰/MW)</button>
-        <button class="build-btn btn-tree" onmouseenter="showPreview('tree')" onclick="buildPlant('tree')">🌳 Ağaç (100 💰/Birim)</button>
-        <button class="build-btn btn-house" onmouseenter="showPreview('house')" onclick="buildPlant('house')">🏠 Ev Kur (2.000 💰/Blok)</button>
+        <div class="controls">
+            <button class="build-btn btn-coal" onmouseenter="showPreview('coal')" onclick="buildPlant('coal')">🏭 Kömür (3.000 💰/MW)</button>
+            <button class="build-btn btn-gas" onmouseenter="showPreview('gas')" onclick="buildPlant('gas')">🔥 Doğalgaz (1.500 💰/MW)</button>
+            <button class="build-btn btn-solar" onmouseenter="showPreview('solar')" onclick="buildPlant('solar')">☀️ Güneş (800 💰/MW)</button>
+            <button class="build-btn btn-wind" onmouseenter="showPreview('wind')" onclick="buildPlant('wind')">🌬️ Rüzgar (1.800 💰/MW)</button>
+            <button class="build-btn btn-geo" onmouseenter="showPreview('geo')" onclick="buildPlant('geo')">🌋 Jeotermal (5.000 💰/MW)</button>
+            <button class="build-btn btn-hydro" onmouseenter="showPreview('hydro')" onclick="buildPlant('hydro')">🌊 Hidrolik (5.000 💰/MW)</button>
+            <button class="build-btn btn-battery" onmouseenter="showPreview('battery')" onclick="buildPlant('battery')">🔋 Depolama (1.500 💰/MW)</button>
+            <button class="build-btn btn-tree" onmouseenter="showPreview('tree')" onclick="buildPlant('tree')">🌳 Ağaç (100 💰/Birim)</button>
+            <button class="build-btn btn-house" onmouseenter="showPreview('house')" onclick="buildPlant('house')">🏠 Ev Kur (2.000 💰/Blok)</button>
+        </div>
     </div>
 
     <div class="section-title">🗺️ 3D Şebeke Yönetimi</div>
@@ -177,6 +196,36 @@
         </div>
     </div>
 
+    <script>
+        // --- SEKME (TAB) YÖNETİMİ ---
+        function toggleTab(name) {
+            const panels = { goals: document.getElementById('goals-panel'), build: document.getElementById('build-panel') };
+            const btns = { goals: document.getElementById('tabGoalsBtn'), build: document.getElementById('tabBuildBtn') };
+            const isCurrentlyOpen = panels[name].classList.contains('open');
+
+            Object.keys(panels).forEach(key => {
+                panels[key].classList.remove('open');
+                btns[key].classList.remove('active');
+            });
+
+            if (!isCurrentlyOpen) {
+                panels[name].classList.add('open');
+                btns[name].classList.add('active');
+            }
+            if (window.SoundEngine) window.SoundEngine.click();
+        }
+
+        function toggleSound() {
+            const enabled = window.SoundEngine ? window.SoundEngine.toggle() : true;
+            document.getElementById('soundToggleBtn').innerText = enabled ? '🔊' : '🔇';
+        }
+    </script>
     <script src="game.js"></script>
+    <script>
+        // Ses düğmesinin başlangıç ikonunu SoundEngine'in kayıtlı tercihine göre ayarla
+        if (window.SoundEngine) {
+            document.getElementById('soundToggleBtn').innerText = window.SoundEngine.isEnabled() ? '🔊' : '🔇';
+        }
+    </script>
 </body>
 </html>
