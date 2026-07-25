@@ -14,6 +14,9 @@ let state = {
     storageCharge: 0 // Depoda o an biriken toplam enerji (MWh)
 };
 
+// 1 MW kurulu güç başına saatlik ortalama üretim (kapasite faktörü, MWh)
+const CAPACITY_FACTOR = { coal: 0.75, gas: 0.63, solar: 0.21, wind: 0.33, geo: 0.83, hydro: 0.46 };
+
 // Zamana göre değişen satış fiyatı (💰/MWh)
 function getCurrentPrice() {
     if (state.hour >= 7 && state.hour < 18) return 5.0;   // Gündüz
@@ -42,29 +45,22 @@ const plants = {
     house:   { costPerMw: 2000, emissionPerMw: 0.1, opexPerMw: 0.1, landPerMw: 5.0, allowedInCity: true,  name: "Yerleşim", icon: "🏠", color: 0xecf0f1, geometry: 'house', modelPath: 'assets/models/buildings/house.glb' }
 };
 
-// --- SES MOTORU (yeniden düzenlendi, master gain ve arka plan kontrolü eklendi) ---
+// --- SES MOTORU (Harici dosya gerektirmez, tarayıcıda anlık üretilir) ---
 window.SoundEngine = (function () {
     let ctx = null;
-    let masterGain = null;
-    let userEnabled = true;
-    let muted = false; // arka plana alındığında geçici susturma
+    let enabled = true;
     try {
         const saved = localStorage.getItem('ecogrid_sound_enabled');
-        if (saved !== null) userEnabled = saved === '1';
+        if (saved !== null) enabled = saved === '1';
     } catch (e) { /* localStorage yoksa sessizce devam et */ }
 
     function getCtx() {
-        if (!userEnabled || muted) return null;
+        if (!enabled) return null;
         if (!ctx) {
             try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
             catch (e) { return null; }
         }
         if (ctx.state === 'suspended') ctx.resume();
-        if (!masterGain) {
-            masterGain = ctx.createGain();
-            masterGain.gain.value = userEnabled ? 1 : 0;
-            masterGain.connect(ctx.destination);
-        }
         return ctx;
     }
 
@@ -79,20 +75,9 @@ window.SoundEngine = (function () {
         gain.gain.setValueAtTime(0.0001, c.currentTime + delay);
         gain.gain.linearRampToValueAtTime(volume, c.currentTime + delay + 0.015);
         gain.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + delay + duration);
-        osc.connect(gain);
-        gain.connect(masterGain);
+        osc.connect(gain); gain.connect(c.destination);
         osc.start(c.currentTime + delay);
         osc.stop(c.currentTime + delay + duration + 0.05);
-    }
-
-    function setMuted(m) {
-        muted = m;
-        if (masterGain && ctx) {
-            const target = muted ? 0 : (userEnabled ? 1 : 0);
-            masterGain.gain.setTargetAtTime(target, ctx.currentTime, 0.1);
-        }
-        // Müzik motorunu da aynı anda sustur
-        if (window.MusicEngine) window.MusicEngine.setMuted(muted);
     }
 
     return {
@@ -104,18 +89,16 @@ window.SoundEngine = (function () {
         error: function () { beep(160, 0.18, 'sawtooth', 0.16); beep(110, 0.22, 'sawtooth', 0.14, 0.12); },
         click: function () { beep(300, 0.05, 'sine', 0.07); },
         stateGood: function () { beep(523, 0.15, 'sine', 0.13); beep(659, 0.15, 'sine', 0.13, 0.1); beep(784, 0.25, 'sine', 0.15, 0.2); },
-        stateAlarm: function () { beep(100, 0.2, 'square', 0.2); beep(80, 0.2, 'square', 0.18, 0.15); beep(60, 0.3, 'square', 0.16, 0.3); },
+        stateAlarm: function () { beep(880, 0.15, 'square', 0.16); beep(660, 0.15, 'square', 0.16, 0.18); beep(880, 0.15, 'square', 0.16, 0.36); },
         toggle: function () {
-            userEnabled = !userEnabled;
-            try { localStorage.setItem('ecogrid_sound_enabled', userEnabled ? '1' : '0'); } catch (e) {}
-            if (userEnabled) { getCtx(); beep(440, 0.08, 'sine', 0.1); }
-            if (window.MusicEngine) window.MusicEngine.setMuted(!userEnabled);
-            setMuted(false); // mute'u kaldır, ama userEnabled false ise master gain 0 olacak
-            return userEnabled;
+            enabled = !enabled;
+            try { localStorage.setItem('ecogrid_sound_enabled', enabled ? '1' : '0'); } catch (e) {}
+            if (enabled) { getCtx(); beep(440, 0.08, 'sine', 0.1); }
+            if (window.MusicEngine) window.MusicEngine.setMuted(!enabled);
+            return enabled;
         },
-        isEnabled: function () { return userEnabled && !muted; },
-        setMuted: setMuted,
-        getContext: function () { return ctx; }
+        isEnabled: function () { return enabled; },
+        getContext: function () { return getCtx(); }
     };
 })();
 
@@ -692,12 +675,12 @@ function buildPlant(type) {
     if (isNaN(capacity) || capacity <= 0) return;
     if (zone === "city" && !plant.allowedInCity) { SoundEngine.error(); alert("Halk itirazı! Bu tesis şehir içine kurulamaz."); return; }
     
-    if (zone === "forest" && type !== "tree") { SoundEngine.error(); alert("Orman alanına sadece Ağaç dikilebilir!"); return; }
-    if (type === "tree" && zone !== "forest") { SoundEngine.error(); alert("Ağaçlar sadece Orman alanına dikilebilir!"); return; }
-    if (type === "house" && zone !== "city") { SoundEngine.error(); alert("İnsanlar sadece Şehir İçi alanlara yerleşebilir!"); return; }
+    if (zone === "forest" && type !== "tree") { SoundEngine.error(); alert("Hata: Orman alanına sadece Ağaç dikilebilir!"); return; }
+    if (type === "tree" && zone !== "forest") { SoundEngine.error(); alert("Hata: Ağaçlar sadece Orman alanına dikilebilir!"); return; }
+    if (type === "house" && zone !== "city") { SoundEngine.error(); alert("Hata: İnsanlar sadece Şehir İçi alanlara yerleşebilir!"); return; }
 
     let emptyTile = getNextEmptySlot(zone);
-    if (!emptyTile) { SoundEngine.error(); alert("Haritada yer kalmadı! Yukarıdan arazi satın al."); return; }
+    if (!emptyTile) { SoundEngine.error(); alert(`Haritada yer kalmadı! Yukarıdan arazi satın al.`); return; }
 
     let landToAdd = capacity * plant.landPerMw;
     if (zone === "city" && (state.land.cityUsed + landToAdd > state.land.cityMax)) { SoundEngine.error(); alert("Şehirde yeterli arazi kalmadı! Arazi satın alın."); return; }
@@ -926,38 +909,13 @@ function runTick() {
         });
     }
 
-    // --- SAATLİK GÜNEŞ VE RÜZGAR FAKTÖRLERİ (eski sabit CAPACITY_FACTOR kaldırıldı) ---
-    let solarFactor = 0;
-    if (state.isDay) {
-        // 07:00 - 18:00 arası, 11 saat, öğlen 12:00'da maksimum
-        const hour = state.hour;
-        if (hour >= 7 && hour <= 18) {
-            const peak = 0.35; // maksimum faktör
-            const center = 12.5;
-            const width = 6; // yarım gün genişliği
-            const x = (hour - center) / width;
-            solarFactor = peak * Math.exp(-x * x * 2.5); // Gaussian benzeri
-        }
-    }
-    // Rüzgar: sinüs dalgası ile sürekli değişim (0.2 - 0.5 arası)
-    const windFactor = 0.2 + 0.3 * (0.5 + 0.5 * Math.sin((state.hour / 24) * 2 * Math.PI + 1.2));
-
-    // --- SAATLİK TALEP ÇARPANI ---
-    let demandMultiplier = 1.0;
-    if (state.hour >= 0 && state.hour < 7) demandMultiplier = 0.75;      // gece
-    else if (state.hour >= 7 && state.hour < 18) demandMultiplier = 1.0; // gündüz
-    else demandMultiplier = 1.25;                                        // akşam
-
     // --- SABİT KAPASİTE FAKTÖRLERİYLE HAM ÜRETİM (1 MW kurulu güç x faktör = MWh) ---
     function rawZone(zoneStr) {
         let z = state.installed[zoneStr];
         return {
-            coal: z.coal * 0.75,      // kömür sabit
-            gas: z.gas * 0.63,        // gaz sabit
-            geo: z.geo * 0.83,        // jeotermal sabit
-            hydro: z.hydro * 0.46,    // hidro sabit
-            solar: z.solar * solarFactor,
-            wind: z.wind * windFactor
+            coal: z.coal * CAPACITY_FACTOR.coal, gas: z.gas * CAPACITY_FACTOR.gas,
+            geo: z.geo * CAPACITY_FACTOR.geo, hydro: z.hydro * CAPACITY_FACTOR.hydro,
+            solar: z.solar * CAPACITY_FACTOR.solar, wind: z.wind * CAPACITY_FACTOR.wind
         };
     }
     let cityR = rawZone("city"); let ruralR = rawZone("rural");
@@ -970,7 +928,7 @@ function runTick() {
     let windProd = cityR.wind + ruralR.wind * 0.9;
 
     let totalRawProduction = coalProd + gasProd + geoProd + hydroProd + solarProd + windProd;
-    let currentDemand = state.population * state.demandPerPerson * demandMultiplier; // MWh
+    let currentDemand = state.population * state.demandPerPerson; // MWh
 
     // --- DEPOLAMA: fazla üretimin bir kısmını depola, açık verince depodan kullan ---
     let totalMaxStorage = 0;
@@ -1050,8 +1008,8 @@ function runTick() {
         document.getElementById('breakdownDetails').innerHTML = bdHtml || "Henüz üretim yapan santral yok.";
 
         document.getElementById('clockDisplay').innerText = (state.isDay ? "🌞 " : "🌙 ") + (state.hour < 10 ? "0" : "") + state.hour + ":00";
-        document.getElementById('solarDisplay').innerText = `Güneş KF: %${Math.floor(solarFactor * 100)}`;
-        document.getElementById('windDisplay').innerText = `Rüzgar KF: %${Math.floor(windFactor * 100)}`;
+        document.getElementById('solarDisplay').innerText = `Güneş KF: %${Math.floor(CAPACITY_FACTOR.solar * 100)}`;
+        document.getElementById('windDisplay').innerText = `Rüzgar KF: %${Math.floor(CAPACITY_FACTOR.wind * 100)}`;
 
         // --- KURULU GÜÇ PANELİ ---
         document.getElementById('installedTotal').innerText = getCapacity('coal') + getCapacity('gas') + getCapacity('geo') + getCapacity('hydro') + getCapacity('solar') + getCapacity('wind');
@@ -1090,14 +1048,11 @@ function runTick() {
         
         let advisorDiv = document.getElementById('advisor-message');
         let currentAdvisorState = 'warning';
-
-        // Denge kontrolü: netEnergy >= 0 ise asla danger verme (eşitlik denge demektir)
         if (displayEms > 50) {
             advisorDiv.innerHTML = `🚨 DANIŞMAN: Bütçen karbon vergisinden eriyor (-${carbonTax.toFixed(1)} 💰). Fosil yakıtları sök veya acilen <b>Ağaç Dik</b>!`;
             advisorDiv.className = "danger-advisor";
             currentAdvisorState = 'danger';
         } else if (netEnergy < 0 && dischargedThisTick <= 0.01) {
-            // Net negatif ve depodan destek yok -> çöküş
             advisorDiv.innerHTML = `🚨 DANIŞMAN: Elektrik yetersiz! Şebeke çöküyor, nüfus azalıyor. Hemen yatırım yap veya <b>Depolama</b> kur!`;
             advisorDiv.className = "danger-advisor";
             currentAdvisorState = 'danger';
@@ -1119,7 +1074,7 @@ function runTick() {
             currentAdvisorState = 'good';
         }
 
-        // Durum değiştiğinde sesli uyarı
+        // Durum değiştiğinde (her 2.5sn'de bir değil, sadece geçişte) sesli uyarı ver
         if (currentAdvisorState !== lastAdvisorState) {
             if (currentAdvisorState === 'danger') SoundEngine.stateAlarm();
             else if (currentAdvisorState === 'good' && lastAdvisorState !== null) SoundEngine.stateGood();
@@ -1132,20 +1087,4 @@ function runTick() {
     saveGame();
 }
 
-// --- ARKA PLAN OTOMATİK SESSİZE ALMA ---
-document.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-        SoundEngine.setMuted(true);
-    } else {
-        SoundEngine.setMuted(false);
-    }
-});
-
-// --- BAŞLANGIÇTA SES DURUMUNU GÜNCELLE (buton ikonu) ---
-document.addEventListener('DOMContentLoaded', function() {
-    const btn = document.getElementById('soundToggleBtn');
-    if (btn) btn.innerText = SoundEngine.isEnabled() ? '🔊' : '🔇';
-});
-
-// Döngüyü başlat
 setInterval(runTick, 2500);
