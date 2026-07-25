@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.json">
 
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #ecf0f1; margin: 0; padding: 10px; overflow-x: hidden; overscroll-behavior-y: contain; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 20px; background-color: #ecf0f1; margin: 0; overflow-x: hidden; }
         
         .top-bar { display: flex; justify-content: space-between; background: #2c3e50; color: white; padding: 15px; border-radius: 8px; font-size: 14px; font-weight: bold; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative;}
         .status-box { display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.2); padding: 5px 15px; border-radius: 5px; position: relative;}
@@ -21,12 +21,15 @@
         .tax-alert { color: #e74c3c; font-weight: bold; }
 
         .income-breakdown-panel { visibility: hidden; width: 220px; background-color: #34495e; color: #fff; text-align: left; border-radius: 6px; padding: 10px; position: absolute; z-index: 100; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 10px; font-size: 12px; font-weight: normal; line-height: 1.5; box-shadow: 0 6px 12px rgba(0,0,0,0.4); opacity: 0; transition: opacity 0.3s; }
-        .status-box.hoverable:hover .income-breakdown-panel { visibility: visible; opacity: 1; }
+        .income-breakdown-panel.panel-open { visibility: visible; opacity: 1; }
         .income-row { display: flex; justify-content: space-between; border-bottom: 1px solid #7f8c8d; padding-bottom: 4px; margin-bottom: 4px;}
+
+        #storage-status { display: none; font-weight: 600; font-size: 13px; padding: 10px 15px; margin-bottom: 15px; border-radius: 4px; background: #f4f6f7; border-left: 5px solid #8e44ad; }
 
         .input-area { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .input-row { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; margin-bottom: 15px; }
         .input-area input, .input-area select { font-size: 15px; padding: 8px; border: 2px solid #3498db; border-radius: 5px; font-weight: bold;}
+        #landBuySelect { max-width: 150px; font-size: 12px; padding: 8px 4px; }
         
         #costPreviewBox { background: #fdfefe; border-left: 5px solid #f39c12; padding: 15px; font-size: 14px; color: #2c3e50; font-weight: 500; border-radius: 4px; box-shadow: inset 0 0 5px rgba(0,0,0,0.05); }
 
@@ -100,15 +103,24 @@
         <div class="status-box">
             <span style="font-size: 12px; color: #bdc3c7;">Nüfus & Kapasite</span>
             <span>🏙️ <span id="population">1000</span> (<span id="maxPopDisplay" style="font-size:10px;">1000</span>) Kişi</span>
-            <span style="color: #e67e22; font-size: 12px;">⚡ Talep: <span id="demand">50</span> MW</span>
+            <span style="color: #e67e22; font-size: 12px;">⚡ Talep: <span id="demand">50</span> MWh</span>
         </div>
 
-        <div class="status-box hoverable">
+        <div class="status-box hoverable" id="installedBox" onclick="toggleInfoPanel('installedPanel')">
+            <span style="font-size: 12px; color: #bdc3c7;">🏗️ Kurulu Güç ℹ️</span>
+            <span style="color: #9b59b6;"><span id="installedTotal">0</span> MW</span>
+            <div class="income-breakdown-panel" id="installedPanel" onclick="event.stopPropagation()">
+                <b style="color:#9b59b6;">Kurulu Güç Dağılımı (Tesis Sayısı):</b><br><br>
+                <div id="installedDetails">Veri bekleniyor...</div>
+            </div>
+        </div>
+
+        <div class="status-box hoverable" id="productionBox" onclick="toggleInfoPanel('productionPanel')">
             <span style="font-size: 12px; color: #bdc3c7;">Üretilen & Satılan ℹ️</span>
-            <span style="color: #f1c40f;">⚡ Üretim: <span id="energy">0</span> MW</span>
-            <span style="color: #e67e22; font-size: 12px;">Satılan: <span id="soldEnergy">0</span> MW</span>
+            <span style="color: #f1c40f;">⚡ Üretim: <span id="energy">0</span> MWh</span>
+            <span style="color: #e67e22; font-size: 12px;">Satılan: <span id="soldEnergy">0</span> MWh</span>
             
-            <div class="income-breakdown-panel" id="productionPanel">
+            <div class="income-breakdown-panel" id="productionPanel" onclick="event.stopPropagation()">
                 <b style="color:#f1c40f;">Tesislerin Anlık Üretimi:</b><br><br>
                 <div id="breakdownDetails">Veri bekleniyor...</div>
             </div>
@@ -141,19 +153,18 @@
     </div>
 
     <div id="advisor-message" class="danger-advisor">🚨 Danışman: Şehrin enerjisi kesik. Hemen bütçene uygun bir santral kurmalısın. İnsanların evleri şu an karanlıkta!</div>
+    <div id="storage-status">🔋 Depo Durumu: 0 / 0 MWh</div>
 
     <div id="build-panel" class="tab-panel">
         <div class="input-area" style="background: #fdfefe; border: 2px solid #bdc3c7;">
-            <div class="input-row" style="margin-bottom:0; justify-content: space-between;">
-                <div style="display:flex; gap:15px; align-items: center;">
-                    <label><b>🗺️ Arazi Genişlet (Satın Al):</b></label>
-                    <select id="landBuySelect">
-                        <option value="city">🏙️ Şehir İçi (+50 ha) - 20.000 💰</option>
-                        <option value="rural">🌾 Kırsal Alan (+50 ha) - 10.000 💰</option>
-                        <option value="forest">🌲 Orman (+50 ha) - 5.000 💰</option>
-                    </select>
-                    <button class="build-btn" style="background:#27ae60; color:white;" onclick="buyLand()">Satın Al</button>
-                </div>
+            <div class="input-row" style="margin-bottom:0; flex-wrap: wrap;">
+                <label><b>🗺️ Arazi Genişlet:</b></label>
+                <select id="landBuySelect">
+                    <option value="city">🏙️ Şehir (+50ha) 20k💰</option>
+                    <option value="rural">🌾 Kırsal (+50ha) 10k💰</option>
+                    <option value="forest">🌲 Orman (+50ha) 5k💰</option>
+                </select>
+                <button class="build-btn" style="background:#27ae60; color:white;" onclick="buyLand()">Satın Al</button>
             </div>
         </div>
 
@@ -197,6 +208,19 @@
     </div>
 
     <script>
+        // --- BİLGİ PANELLERİ (Kurulu Güç / Üretim) - dokunmatik uyumlu aç/kapa ---
+        function toggleInfoPanel(id) {
+            const panel = document.getElementById(id);
+            const isOpen = panel.classList.contains('panel-open');
+            document.querySelectorAll('.income-breakdown-panel').forEach(p => p.classList.remove('panel-open'));
+            if (!isOpen) panel.classList.add('panel-open');
+        }
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.status-box.hoverable')) {
+                document.querySelectorAll('.income-breakdown-panel').forEach(p => p.classList.remove('panel-open'));
+            }
+        });
+
         // --- SEKME (TAB) YÖNETİMİ ---
         function toggleTab(name) {
             const panels = { goals: document.getElementById('goals-panel'), build: document.getElementById('build-panel') };
