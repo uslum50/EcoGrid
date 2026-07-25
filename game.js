@@ -428,6 +428,7 @@ function loadGame() {
 if (!loadGame()) {
     generateInitialCity();
 }
+updateUI(); // Kaydedilmiş kapasite/arazi değerlerini ekrana hemen yansıt (sayfa yenilendiğinde varsayılan değerlerde takılı kalmasın)
 
 // --- BAŞLANGIÇ ŞEHRİ (EVLERİ YERLEŞTİR) ---
 function generateInitialCity(skipRecord) {
