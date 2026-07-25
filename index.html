@@ -52,6 +52,7 @@
         .tab-btn:hover { background: #ced6e0; }
         .tab-btn.active { background: #9b59b6; color: white; }
         .tab-btn#tabBuildBtn.active { background: #2980b9; }
+        .tab-btn#tabMaintBtn.active { background: #16a085; }
         .tab-btn.sound-btn { flex: 0 0 auto; min-width: 60px; background: #2c3e50; color: white; }
         .tab-panel { display: none; }
         .tab-panel.open { display: block; animation: slideDown 0.2s ease; }
@@ -138,7 +139,14 @@
     <div class="tabs-bar">
         <button class="tab-btn" id="tabGoalsBtn" onclick="toggleTab('goals')">🎯 Görevler</button>
         <button class="tab-btn" id="tabBuildBtn" onclick="toggleTab('build')">🏗️ Santral Kur</button>
+        <button class="tab-btn" id="tabMaintBtn" onclick="toggleTab('maint')">🔧 Bakım</button>
         <button class="tab-btn sound-btn" id="soundToggleBtn" onclick="toggleSound()">🔊</button>
+    </div>
+
+    <!-- BAKIM PANELİ (SANTRAL SAĞLIĞI) -->
+    <div id="maintenance-panel" class="tab-panel">
+        <div style="width: 100%; font-size: 16px; font-weight: bold; color: #16a085; border-bottom: 2px solid #ecf0f1; padding-bottom: 5px; margin-bottom: 8px;">🔧 SANTRAL SAĞLIĞI VE BAKIM</div>
+        <div id="maintenanceDetails">Yükleniyor...</div>
     </div>
 
     <!-- HEDEFLER PANELİ (ÇOKLU) -->
@@ -223,8 +231,8 @@
 
         // --- SEKME (TAB) YÖNETİMİ ---
         function toggleTab(name) {
-            const panels = { goals: document.getElementById('goals-panel'), build: document.getElementById('build-panel') };
-            const btns = { goals: document.getElementById('tabGoalsBtn'), build: document.getElementById('tabBuildBtn') };
+            const panels = { goals: document.getElementById('goals-panel'), build: document.getElementById('build-panel'), maint: document.getElementById('maintenance-panel') };
+            const btns = { goals: document.getElementById('tabGoalsBtn'), build: document.getElementById('tabBuildBtn'), maint: document.getElementById('tabMaintBtn') };
             const isCurrentlyOpen = panels[name].classList.contains('open');
 
             Object.keys(panels).forEach(key => {
