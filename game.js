@@ -1,7 +1,7 @@
 // --- SİMÜLASYON DURUMU ---
 let state = {
     budget: 100000, emissions: 0, totalOpex: 0,
-    population: 1000, maxPopulation: 1000, demandPerPerson: 0.02, // 1000 kişi için 20 MWh -> kişi başı 0.02 MWh
+    population: 1000, maxPopulation: 1000,
     hour: 8, isDay: true,
     land: { cityUsed: 0, cityMax: 500, ruralUsed: 0, ruralMax: 9000, forestUsed: 0, forestMax: 1000 },
     expansions: { city: 0, rural: 0, forest: 0 }, // Yeni eklenen zemin sayısını tutar
@@ -11,11 +11,33 @@ let state = {
         forest: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, solarStorage:0, windStorage:0, tree:0, house:0 }
     },
     plantCounts: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, battery:0, tree:0, house:20 },
-    storageCharge: 0 // Depoda o an biriken toplam enerji (MWh)
+    storageCharge: 0, // Depoda o an biriken toplam enerji (MWh)
+    solarFactor: 0.0, windFactor: 0.33 // Güneş/rüzgar için gün boyu değişen anlık kapasite faktörü
 };
 
-// 1 MW kurulu güç başına saatlik ortalama üretim (kapasite faktörü, MWh)
-const CAPACITY_FACTOR = { coal: 0.75, gas: 0.63, solar: 0.21, wind: 0.33, geo: 0.83, hydro: 0.46 };
+// 1 MW kurulu güç başına saatlik ortalama üretim (kapasite faktörü, MWh) - sadece sabit kaynaklar için
+const CAPACITY_FACTOR = { coal: 0.75, gas: 0.63, geo: 0.83, hydro: 0.46 };
+
+// Güneş, saate göre gün boyu değişir (kullanıcının belirttiği tam oranlar, gece 0)
+function getSolarFactor(hour) {
+    if (hour === 6) return 0.10;
+    if (hour === 7 || hour === 8) return 0.30;
+    if (hour === 9) return 0.50;
+    if (hour === 10 || hour === 11) return 0.80;
+    if (hour >= 12 && hour <= 15) return 1.00;
+    if (hour === 16) return 0.80;
+    if (hour === 17) return 0.50;
+    if (hour === 18) return 0.30;
+    if (hour === 19) return 0.10;
+    return 0.0; // 20:00 - 06:00 arası güneş üretmez
+}
+
+// Kişi başı saatlik tüketim, güne göre değişir (akşam yüksek, gece düşük, gündüz normal)
+function getCurrentDemandPerPerson() {
+    if (state.hour >= 18 && state.hour < 24) return 0.025; // Akşam: 1000 kişi -> 25 MWh
+    if (state.hour >= 7 && state.hour < 18) return 0.020;  // Gündüz: 1000 kişi -> 20 MWh
+    return 0.015;                                           // Gece: 1000 kişi -> 15 MWh
+}
 
 // Zamana göre değişen satış fiyatı (💰/MWh)
 function getCurrentPrice() {
@@ -45,7 +67,7 @@ const plants = {
     house:   { costPerMw: 2000, emissionPerMw: 0.1, opexPerMw: 0.1, landPerMw: 5.0, allowedInCity: true,  name: "Yerleşim", icon: "🏠", color: 0xecf0f1, geometry: 'house', modelPath: 'assets/models/buildings/house.glb' }
 };
 
-// --- SES MOTORU (Harici dosya gerektirmez, tarayıcıda anlık üretilir) ---
+// --- SES MOTORU (Harici dosya gerektirmez, tarayıcıda anlık üretilir; sadece bildirim sesleri) ---
 window.SoundEngine = (function () {
     let ctx = null;
     let enabled = true;
@@ -90,112 +112,94 @@ window.SoundEngine = (function () {
         click: function () { beep(300, 0.05, 'sine', 0.07); },
         stateGood: function () { beep(523, 0.15, 'sine', 0.13); beep(659, 0.15, 'sine', 0.13, 0.1); beep(784, 0.25, 'sine', 0.15, 0.2); },
         stateAlarm: function () { beep(880, 0.15, 'square', 0.16); beep(660, 0.15, 'square', 0.16, 0.18); beep(880, 0.15, 'square', 0.16, 0.36); },
+        // Gerçek susturma: bağlamı tamamen askıya alır, hiçbir ses (planlanmış olsa bile) duyulmaz
         toggle: function () {
             enabled = !enabled;
             try { localStorage.setItem('ecogrid_sound_enabled', enabled ? '1' : '0'); } catch (e) {}
             if (enabled) { getCtx(); beep(440, 0.08, 'sine', 0.1); }
-            if (window.MusicEngine) window.MusicEngine.setMuted(!enabled);
+            else if (ctx && ctx.state !== 'suspended') { ctx.suspend(); }
             return enabled;
         },
         isEnabled: function () { return enabled; },
-        getContext: function () { return getCtx(); }
+        // Uygulama arka plana alındığında çağrılır: ses tamamen susar
+        suspendForBackground: function () { if (ctx && ctx.state === 'running') ctx.suspend(); },
+        // Uygulama tekrar öne geldiğinde çağrılır: kullanıcı sesi kapatmadıysa devam eder
+        resumeFromBackground: function () { if (enabled && ctx && ctx.state === 'suspended') ctx.resume(); }
     };
 })();
 
-// --- ARKA PLAN MÜZİĞİ (durum iyiyken huzurlu, tehlikedeyken karanlık/tehditkar - kesintisiz çalar) ---
-window.MusicEngine = (function () {
-    let started = false;
-    let muted = !window.SoundEngine.isEnabled();
-    let calmGain, tenseGain, master;
-    let lastMood = null;
+// Sekme/uygulama arka plana alınınca sesi tamamen kes, öne gelince (kullanıcı kapatmadıysa) devam ettir
+document.addEventListener('visibilitychange', function () {
+    if (document.hidden) window.SoundEngine.suspendForBackground();
+    else window.SoundEngine.resumeFromBackground();
+});
+window.addEventListener('blur', function () { window.SoundEngine.suspendForBackground(); });
+window.addEventListener('focus', function () { window.SoundEngine.resumeFromBackground(); });
 
-    function build() {
-        const ctx = window.SoundEngine.getContext();
-        if (!ctx || started) return;
-        started = true;
+// --- ÖZEL BİLDİRİM PENCERESİ (tarayıcının "site diyor ki" ön ekini tamamen ortadan kaldırır) ---
+(function () {
+    const style = document.createElement('style');
+    style.textContent = `
+        .ecogrid-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 99999; display: none; align-items: center; justify-content: center; padding: 20px; }
+        .ecogrid-modal-overlay.open { display: flex; }
+        .ecogrid-modal-box { background: #fff; border-radius: 12px; max-width: 360px; width: 100%; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); font-family: inherit; }
+        .ecogrid-modal-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; color: #2c3e50; white-space: pre-wrap; }
+        .ecogrid-modal-input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 15px; border: 2px solid #3498db; border-radius: 6px; margin-top: 8px; margin-bottom: 4px; font-weight: bold; }
+        .ecogrid-modal-buttons { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
+        .ecogrid-modal-buttons button { padding: 10px 18px; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; cursor: pointer; }
+        .ecogrid-modal-buttons .primary { background: #3498db; color: #fff; }
+        .ecogrid-modal-buttons .secondary { background: #ecf0f1; color: #2c3e50; }
+    `;
+    document.head.appendChild(style);
 
-        master = ctx.createGain();
-        master.gain.value = muted ? 0 : 0.5;
-        master.connect(ctx.destination);
+    const overlay = document.createElement('div');
+    overlay.className = 'ecogrid-modal-overlay';
+    overlay.innerHTML = `
+        <div class="ecogrid-modal-box">
+            <div class="ecogrid-modal-title" id="ecogridModalTitle"></div>
+            <input class="ecogrid-modal-input" id="ecogridModalInput" style="display:none;" />
+            <div class="ecogrid-modal-buttons" id="ecogridModalButtons"></div>
+        </div>`;
+    document.body.appendChild(overlay);
 
-        // --- SAKİN KATMAN: yumuşak, parlak, huzurlu pad ---
-        calmGain = ctx.createGain();
-        calmGain.gain.value = 0.0001;
-        const calmFilter = ctx.createBiquadFilter();
-        calmFilter.type = 'lowpass';
-        calmFilter.frequency.value = 1200;
-        calmGain.connect(calmFilter);
-        calmFilter.connect(master);
+    const titleEl = overlay.querySelector('#ecogridModalTitle');
+    const inputEl = overlay.querySelector('#ecogridModalInput');
+    const buttonsEl = overlay.querySelector('#ecogridModalButtons');
 
-        const calmFreqs = [130.81, 164.81, 196.00, 246.94]; // C3 E3 G3 B3 - huzurlu majör akor
-        calmFreqs.forEach((f, i) => {
-            const osc = ctx.createOscillator();
-            osc.type = 'sine';
-            osc.frequency.value = f;
-            const oscGain = ctx.createGain();
-            oscGain.gain.value = i === 0 ? 0.9 : 0.5;
-            osc.connect(oscGain);
-            oscGain.connect(calmGain);
-            osc.start();
-        });
-        // Yavaş "nefes alan" hareket için filtre üzerinde LFO
-        const calmLfo = ctx.createOscillator();
-        calmLfo.type = 'sine'; calmLfo.frequency.value = 0.07;
-        const calmLfoGain = ctx.createGain();
-        calmLfoGain.gain.value = 300;
-        calmLfo.connect(calmLfoGain); calmLfoGain.connect(calmFilter.frequency);
-        calmLfo.start();
-
-        // --- GERGİN KATMAN: alçak, çarpışan, tehditkar drone ---
-        tenseGain = ctx.createGain();
-        tenseGain.gain.value = 0.0001;
-        const tenseFilter = ctx.createBiquadFilter();
-        tenseFilter.type = 'lowpass';
-        tenseFilter.frequency.value = 500;
-        tenseGain.connect(tenseFilter);
-        tenseFilter.connect(master);
-
-        const drone1 = ctx.createOscillator(); drone1.type = 'sawtooth'; drone1.frequency.value = 55; // A1
-        const drone2 = ctx.createOscillator(); drone2.type = 'sawtooth'; drone2.frequency.value = 58.5; // hafif detune -> çarpışma/gerginlik
-        const tritone = ctx.createOscillator(); tritone.type = 'sine'; tritone.frequency.value = 77.78; // tritone -> huzursuzluk
-
-        const droneGain = ctx.createGain(); droneGain.gain.value = 0.5;
-        const tritoneGain = ctx.createGain(); tritoneGain.gain.value = 0.25;
-
-        drone1.connect(droneGain); drone2.connect(droneGain); tritone.connect(tritoneGain);
-        droneGain.connect(tenseGain); tritoneGain.connect(tenseGain);
-        drone1.start(); drone2.start(); tritone.start();
-
-        // Yavaş "kalp atışı" gibi tremolo (tehditkar nabız hissi)
-        const tenseLfo = ctx.createOscillator();
-        tenseLfo.type = 'sine'; tenseLfo.frequency.value = 0.5;
-        const tenseLfoGain = ctx.createGain();
-        tenseLfoGain.gain.value = 0.15;
-        tenseLfo.connect(tenseLfoGain); tenseLfoGain.connect(tenseGain.gain);
-        tenseLfo.start();
+    function close() { overlay.classList.remove('open'); }
+    function open(message, showInput, defaultValue) {
+        titleEl.innerText = message;
+        if (showInput) { inputEl.style.display = 'block'; inputEl.value = defaultValue || ''; setTimeout(() => inputEl.focus(), 50); }
+        else { inputEl.style.display = 'none'; }
+        buttonsEl.innerHTML = '';
+        overlay.classList.add('open');
+    }
+    function addButton(label, primary, onClick) {
+        const btn = document.createElement('button');
+        btn.className = primary ? 'primary' : 'secondary';
+        btn.innerText = label;
+        btn.onclick = onClick;
+        buttonsEl.appendChild(btn);
+        return btn;
     }
 
-    function rampTo(gainNode, value, seconds) {
-        if (!gainNode) return;
-        const ctx = window.SoundEngine.getContext();
-        if (!ctx) return;
-        gainNode.gain.cancelScheduledValues(ctx.currentTime);
-        gainNode.gain.setTargetAtTime(Math.max(value, 0.0001), ctx.currentTime, seconds / 3);
-    }
-
-    return {
-        ensureStarted: function () { if (!started) build(); },
-        setMood: function (mood) {
-            if (!started || mood === lastMood) return;
-            lastMood = mood;
-            if (mood === 'good') { rampTo(calmGain, 0.9, 3); rampTo(tenseGain, 0.0001, 3); }
-            else if (mood === 'danger') { rampTo(calmGain, 0.0001, 2); rampTo(tenseGain, 0.85, 2); }
-            else { rampTo(calmGain, 0.45, 3); rampTo(tenseGain, 0.4, 3); } // warning: gerilimli geçiş
-        },
-        setMuted: function (isMuted) {
-            muted = isMuted;
-            if (master) { const ctx = window.SoundEngine.getContext(); if (ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.3); }
-        }
+    // alert() yerine: sadece "Tamam" butonu olan bilgi penceresi
+    window.showAlert = function (message) {
+        open(message, false);
+        addButton('Tamam', true, close);
+    };
+    // confirm() yerine: Evet/Hayır seçenekli, onaylanınca callback çalışır
+    window.showConfirm = function (message, onYes) {
+        open(message, false);
+        addButton('Hayır', false, close);
+        addButton('Evet', true, function () { close(); onYes(); });
+    };
+    // prompt() yerine: metin girişli, Tamam'a basınca callback(value) çalışır
+    window.showPrompt = function (message, defaultValue, onSubmit) {
+        open(message, true, defaultValue);
+        addButton('İptal', false, close);
+        addButton('Tamam', true, function () { let v = inputEl.value; close(); onSubmit(v); });
+        inputEl.onkeydown = function (e) { if (e.key === 'Enter') { let v = inputEl.value; close(); onSubmit(v); } };
     };
 })();
 
@@ -414,7 +418,7 @@ function loadGame() {
         simulatingOffline = false;
         let deltaBudget = Math.floor(state.budget - startBudget);
         setTimeout(() => {
-            alert(`⏱️ Uzaktayken geçen sürede şebeke ${ticksToSimulate} saat çalıştı.\nKasa değişimi: ${deltaBudget >= 0 ? '+' : ''}${deltaBudget.toLocaleString()} 💰\nNüfus: ${Math.floor(state.population)} kişi`);
+            showAlert(`⏱️ Uzaktayken geçen sürede şebeke ${ticksToSimulate} saat çalıştı.\nKasa değişimi: ${deltaBudget >= 0 ? '+' : ''}${deltaBudget.toLocaleString()} 💰\nNüfus: ${Math.floor(state.population)} kişi`);
         }, 400);
     }
     return true;
@@ -453,7 +457,7 @@ window.buyLand = function() {
     let type = document.getElementById('landBuySelect').value;
     let cost = type === 'city' ? 20000 : (type === 'rural' ? 10000 : 5000);
     
-    if (state.budget < cost) { SoundEngine.error(); alert("Bu araziyi satın almak için yeterli bütçen yok!"); return; }
+    if (state.budget < cost) { SoundEngine.error(); showAlert("Bu araziyi satın almak için yeterli bütçen yok!"); return; }
     
     SoundEngine.land();
     state.budget -= cost;
@@ -475,7 +479,7 @@ window.buyLand = function() {
     recenterWorld();
     
     let typeName = type === 'city' ? 'Şehir İçi' : (type === 'rural' ? 'Kırsal Alan' : 'Orman');
-    alert(`Harika! ${typeName} haritada 50 ha genişledi. Uca eklenen yeni arazilere bakabilirsin!`);
+    showAlert(`Harika! ${typeName} haritada 50 ha genişledi. Uca eklenen yeni arazilere bakabilirsin!`);
     updateUI();
     saveGame();
 };
@@ -673,35 +677,40 @@ function buildPlant(type) {
     let plant = plants[type];
     
     if (isNaN(capacity) || capacity <= 0) return;
-    if (zone === "city" && !plant.allowedInCity) { SoundEngine.error(); alert("Halk itirazı! Bu tesis şehir içine kurulamaz."); return; }
+    if (zone === "city" && !plant.allowedInCity) { SoundEngine.error(); showAlert("Halk itirazı! Bu tesis şehir içine kurulamaz."); return; }
     
-    if (zone === "forest" && type !== "tree") { SoundEngine.error(); alert("Hata: Orman alanına sadece Ağaç dikilebilir!"); return; }
-    if (type === "tree" && zone !== "forest") { SoundEngine.error(); alert("Hata: Ağaçlar sadece Orman alanına dikilebilir!"); return; }
-    if (type === "house" && zone !== "city") { SoundEngine.error(); alert("Hata: İnsanlar sadece Şehir İçi alanlara yerleşebilir!"); return; }
+    if (zone === "forest" && type !== "tree") { SoundEngine.error(); showAlert("Hata: Orman alanına sadece Ağaç dikilebilir!"); return; }
+    if (type === "tree" && zone !== "forest") { SoundEngine.error(); showAlert("Hata: Ağaçlar sadece Orman alanına dikilebilir!"); return; }
+    if (type === "house" && zone !== "city") { SoundEngine.error(); showAlert("Hata: İnsanlar sadece Şehir İçi alanlara yerleşebilir!"); return; }
 
     let emptyTile = getNextEmptySlot(zone);
-    if (!emptyTile) { SoundEngine.error(); alert(`Haritada yer kalmadı! Yukarıdan arazi satın al.`); return; }
+    if (!emptyTile) { SoundEngine.error(); showAlert(`Haritada yer kalmadı! Yukarıdan arazi satın al.`); return; }
 
     let landToAdd = capacity * plant.landPerMw;
-    if (zone === "city" && (state.land.cityUsed + landToAdd > state.land.cityMax)) { SoundEngine.error(); alert("Şehirde yeterli arazi kalmadı! Arazi satın alın."); return; }
-    if (zone === "rural" && (state.land.ruralUsed + landToAdd > state.land.ruralMax)) { SoundEngine.error(); alert("Kırsalda yeterli arazi kalmadı! Arazi satın alın."); return; }
-    if (zone === "forest" && (state.land.forestUsed + landToAdd > state.land.forestMax)) { SoundEngine.error(); alert("Ormanda yer kalmadı! Arazi satın alın."); return; }
+    if (zone === "city" && (state.land.cityUsed + landToAdd > state.land.cityMax)) { SoundEngine.error(); showAlert("Şehirde yeterli arazi kalmadı! Arazi satın alın."); return; }
+    if (zone === "rural" && (state.land.ruralUsed + landToAdd > state.land.ruralMax)) { SoundEngine.error(); showAlert("Kırsalda yeterli arazi kalmadı! Arazi satın alın."); return; }
+    if (zone === "forest" && (state.land.forestUsed + landToAdd > state.land.forestMax)) { SoundEngine.error(); showAlert("Ormanda yer kalmadı! Arazi satın alın."); return; }
 
     let totalCost = capacity * plant.costPerMw;
-    if (state.budget < totalCost) { SoundEngine.error(); alert("Yetersiz Bütçe!"); return; }
+    if (state.budget < totalCost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
 
-    let batteryTarget = "";
     if (type === 'battery') {
-        let answer = prompt("Güneş için 'G', Rüzgar için 'R':");
-        if (!answer) return;
-        answer = answer.toUpperCase();
-        if (answer !== 'G' && answer !== 'R') return;
-        batteryTarget = answer === 'G' ? 'solar' : 'wind';
-        let availableUnstored = state.installed[zone][batteryTarget] - state.installed[zone][batteryTarget + 'Storage'];
-        if (capacity > availableUnstored) { SoundEngine.error(); alert("Yeterli boş tesis yok! Önce o kadar güneş/rüzgar kurulu olması lazım."); return; }
+        showPrompt("Güneş için 'G', Rüzgar için 'R' yaz:", '', function (answer) {
+            if (!answer) return;
+            answer = answer.toUpperCase();
+            if (answer !== 'G' && answer !== 'R') return;
+            let batteryTarget = answer === 'G' ? 'solar' : 'wind';
+            let availableUnstored = state.installed[zone][batteryTarget] - state.installed[zone][batteryTarget + 'Storage'];
+            if (capacity > availableUnstored) { SoundEngine.error(); showAlert("Yeterli boş tesis yok! Önce o kadar güneş/rüzgar kurulu olması lazım."); return; }
+            confirmAndBuild(type, zone, capacity, plant, emptyTile, landToAdd, totalCost, batteryTarget);
+        });
+        return;
     }
 
-    // --- ÖNCE BİLGİLERİ GÖSTER, SONRA ONAY SOR ---
+    confirmAndBuild(type, zone, capacity, plant, emptyTile, landToAdd, totalCost, "");
+}
+
+function confirmAndBuild(type, zone, capacity, plant, emptyTile, landToAdd, totalCost, batteryTarget) {
     let capText = '';
     if (type === 'tree') capText = `${capacity * 10} Bin Ağaç`;
     else if (type === 'house') capText = `${capacity} Blok Ev (+${capacity * 50} Kapasite)`;
@@ -716,45 +725,45 @@ function buildPlant(type) {
         (batteryTarget ? `Bağlanacağı Kaynak: ${batteryTarget === 'solar' ? 'Güneş' : 'Rüzgar'}\n` : '') +
         `\nBu tesisi kurmak istediğine emin misin?`;
 
-    if (!confirm(confirmMsg)) return;
+    showConfirm(confirmMsg, function () {
+        SoundEngine.build();
+        state.budget -= totalCost; 
+        let emissionsToAdd = capacity * plant.emissionPerMw;
+        let opexToAdd = capacity * plant.opexPerMw;
 
-    SoundEngine.build();
-    state.budget -= totalCost; 
-    let emissionsToAdd = capacity * plant.emissionPerMw;
-    let opexToAdd = capacity * plant.opexPerMw;
+        state.emissions += emissionsToAdd;
+        state.totalOpex += opexToAdd; 
+        
+        if (type === 'house') { state.installed[zone][type] += capacity; state.maxPopulation += (capacity * 50); }
+        else if (type === 'battery') state.installed[zone][batteryTarget + 'Storage'] += capacity;
+        else state.installed[zone][type] += capacity;
+        
+        if (zone === "city") state.land.cityUsed += landToAdd; 
+        else if (zone === "rural") state.land.ruralUsed += landToAdd;
+        else if (zone === "forest") state.land.forestUsed += landToAdd;
 
-    state.emissions += emissionsToAdd;
-    state.totalOpex += opexToAdd; 
-    
-    if (type === 'house') { state.installed[zone][type] += capacity; state.maxPopulation += (capacity * 50); }
-    else if (type === 'battery') state.installed[zone][batteryTarget + 'Storage'] += capacity;
-    else state.installed[zone][type] += capacity;
-    
-    if (zone === "city") state.land.cityUsed += landToAdd; 
-    else if (zone === "rural") state.land.ruralUsed += landToAdd;
-    else if (zone === "forest") state.land.forestUsed += landToAdd;
+        emptyTile.isOccupied = true; // Zemin karesini dolu işaretle
+        state.plantCounts[type] = (state.plantCounts[type] || 0) + 1;
+        structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget });
 
-    emptyTile.isOccupied = true; // Zemin karesini dolu işaretle
-    state.plantCounts[type] = (state.plantCounts[type] || 0) + 1;
-    structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget });
+        createMeshForPlant(type, plant.color, plant.geometry, plant.modelPath, function(mesh) {
+            mesh.position.x = emptyTile.col - 9.5; 
+            mesh.position.z = emptyTile.row - 9.5;
 
-    createMeshForPlant(type, plant.color, plant.geometry, plant.modelPath, function(mesh) {
-        mesh.position.x = emptyTile.col - 9.5; 
-        mesh.position.z = emptyTile.row - 9.5;
+            mesh.userData = {
+                type: type, name: plant.name, icon: plant.icon, zone: zone, color: plant.color,
+                capacity: capacity, ems: emissionsToAdd, opex: opexToAdd, land: landToAdd,
+                batteryTarget: batteryTarget, gridRef: emptyTile
+            };
 
-        mesh.userData = {
-            type: type, name: plant.name, icon: plant.icon, zone: zone, color: plant.color,
-            capacity: capacity, ems: emissionsToAdd, opex: opexToAdd, land: landToAdd,
-            batteryTarget: batteryTarget, gridRef: emptyTile
-        };
-
-        worldGroup.add(mesh);
-        meshes.push(mesh);
+            worldGroup.add(mesh);
+            meshes.push(mesh);
+        });
+        
+        updateUI();
+        showAlert(`✅ ${plant.icon} ${plant.name} kuruldu! (${capText})`);
+        saveGame();
     });
-    
-    updateUI();
-    alert(`✅ ${plant.icon} ${plant.name} kuruldu! (${capText})`);
-    saveGame();
 }
 
 window.triggerUpgrade = function() {
@@ -762,52 +771,53 @@ window.triggerUpgrade = function() {
     let d = selectedMesh.userData;
     let plant = plants[d.type];
     
-    let extraStr = prompt(`Kaç birim İLAVE etmek istiyorsunuz? (Birim Fiyat: ${plant.costPerMw} 💰)`);
-    if (!extraStr) return;
-    let extraCapacity = parseInt(extraStr);
-    if (isNaN(extraCapacity) || extraCapacity <= 0) return;
-    
-    let extraCost = extraCapacity * plant.costPerMw;
-    let extraLand = extraCapacity * plant.landPerMw;
-    
-    if (state.budget < extraCost) { SoundEngine.error(); alert("Yetersiz Bütçe!"); return; }
-    if (d.zone === "city" && (state.land.cityUsed + extraLand > state.land.cityMax)) { SoundEngine.error(); alert("Arazi yetersiz!"); return; }
-    if (d.zone === "rural" && (state.land.ruralUsed + extraLand > state.land.ruralMax)) { SoundEngine.error(); alert("Arazi yetersiz!"); return; }
-    if (d.zone === "forest" && (state.land.forestUsed + extraLand > state.land.forestMax)) { SoundEngine.error(); alert("Arazi yetersiz!"); return; }
-    
-    SoundEngine.upgrade();
-    state.budget -= extraCost;
-    let extraEms = extraCapacity * plant.emissionPerMw;
-    let extraOpex = extraCapacity * plant.opexPerMw;
-    
-    state.emissions += extraEms;
-    state.totalOpex += extraOpex;
-    
-    if (d.type === 'house') { state.installed[d.zone][d.type] += extraCapacity; state.maxPopulation += (extraCapacity * 50); }
-    else if (d.type === 'battery') state.installed[d.zone][d.batteryTarget + 'Storage'] += extraCapacity;
-    else state.installed[d.zone][d.type] += extraCapacity;
-    
-    if (d.zone === "city") state.land.cityUsed += extraLand; 
-    else if (d.zone === "rural") state.land.ruralUsed += extraLand;
-    else if (d.zone === "forest") state.land.forestUsed += extraLand;
-    
-    d.capacity += extraCapacity;
-    d.ems += extraEms; d.opex += extraOpex; d.land += extraLand;
-    
-    let structEntry = structures.find(s => s.row === d.gridRef.row && s.col === d.gridRef.col);
-    if (structEntry) structEntry.capacity = d.capacity;
-    
-    selectedMesh.scale.y += 0.2; selectedMesh.position.y += 0.1;
-    closeActionMenu();
-    updateUI();
-    saveGame();
+    showPrompt(`Kaç birim İLAVE etmek istiyorsunuz? (Birim Fiyat: ${plant.costPerMw} 💰)`, '', function (extraStr) {
+        if (!extraStr) return;
+        let extraCapacity = parseInt(extraStr);
+        if (isNaN(extraCapacity) || extraCapacity <= 0) return;
+        
+        let extraCost = extraCapacity * plant.costPerMw;
+        let extraLand = extraCapacity * plant.landPerMw;
+        
+        if (state.budget < extraCost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
+        if (d.zone === "city" && (state.land.cityUsed + extraLand > state.land.cityMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+        if (d.zone === "rural" && (state.land.ruralUsed + extraLand > state.land.ruralMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+        if (d.zone === "forest" && (state.land.forestUsed + extraLand > state.land.forestMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+        
+        SoundEngine.upgrade();
+        state.budget -= extraCost;
+        let extraEms = extraCapacity * plant.emissionPerMw;
+        let extraOpex = extraCapacity * plant.opexPerMw;
+        
+        state.emissions += extraEms;
+        state.totalOpex += extraOpex;
+        
+        if (d.type === 'house') { state.installed[d.zone][d.type] += extraCapacity; state.maxPopulation += (extraCapacity * 50); }
+        else if (d.type === 'battery') state.installed[d.zone][d.batteryTarget + 'Storage'] += extraCapacity;
+        else state.installed[d.zone][d.type] += extraCapacity;
+        
+        if (d.zone === "city") state.land.cityUsed += extraLand; 
+        else if (d.zone === "rural") state.land.ruralUsed += extraLand;
+        else if (d.zone === "forest") state.land.forestUsed += extraLand;
+        
+        d.capacity += extraCapacity;
+        d.ems += extraEms; d.opex += extraOpex; d.land += extraLand;
+        
+        let structEntry = structures.find(s => s.row === d.gridRef.row && s.col === d.gridRef.col);
+        if (structEntry) structEntry.capacity = d.capacity;
+        
+        selectedMesh.scale.y += 0.2; selectedMesh.position.y += 0.1;
+        closeActionMenu();
+        updateUI();
+        saveGame();
+    });
 };
 
 window.triggerDemolish = function() {
     if(!selectedMesh) return;
     let d = selectedMesh.userData;
 
-    if (confirm(`Tesisi söküyorsun. Onaylıyor musun?`)) {
+    showConfirm(`Tesisi söküyorsun. Onaylıyor musun?`, function () {
         SoundEngine.demolish();
         state.emissions -= d.ems; 
         state.totalOpex = Math.max(0, state.totalOpex - d.opex);
@@ -828,7 +838,7 @@ window.triggerDemolish = function() {
         closeActionMenu();
         updateUI();
         saveGame();
-    }
+    });
 };
 
 // --- YENİ: ÇOKLU GÖREV SİSTEMİ ---
@@ -862,7 +872,7 @@ function checkGoals() {
             state.budget += goal.reward;
             if (!simulatingOffline) {
                 SoundEngine.goal();
-                alert(`🎉 GÜNLÜK GÖREV BAŞARILI: ${goal.desc}! \nKasa: +${goal.reward.toLocaleString()} 💰`);
+                showAlert(`🎉 GÜNLÜK GÖREV BAŞARILI: ${goal.desc}! \nKasa: +${goal.reward.toLocaleString()} 💰`);
             }
             dailyGoals[index] = generateDailyGoal(); // Yenisini oluştur
         }
@@ -877,7 +887,7 @@ function checkGoals() {
         state.budget += generalGoal.reward;
         if (!simulatingOffline) {
             SoundEngine.goal();
-            alert(`🏆 GENEL GÖREV BAŞARILI: ${generalGoal.desc}! \nKasa: +${generalGoal.reward.toLocaleString()} 💰`);
+            showAlert(`🏆 GENEL GÖREV BAŞARILI: ${generalGoal.desc}! \nKasa: +${generalGoal.reward.toLocaleString()} 💰`);
         }
         let newTarget = generalGoal.target + 1000;
         generalGoal = { type: 'pop', target: newTarget, current: state.population, reward: newTarget * 30, desc: `Şehir nüfusunu ${newTarget}'e ulaştır` };
@@ -891,8 +901,12 @@ function runTick() {
     if (state.hour > 23) state.hour = 0;
     state.isDay = (state.hour >= 7 && state.hour < 18);
 
+    // Güneş gün boyu değişir (gece 0), rüzgar ise "hava durumu" gibi zaman zaman rastgele değişir
+    state.solarFactor = getSolarFactor(state.hour);
+    if (Math.random() > 0.75) state.windFactor = 0.30 + Math.random() * 0.45; // %30 - %75 arası dalgalanan rüzgar
+
     if (!simulatingOffline) {
-        meshes.forEach(m => { if (m.userData && m.userData.isWind && m.userData.blade) { m.userData.blade.rotation.z += 0.3; } });
+        meshes.forEach(m => { if (m.userData && m.userData.isWind && m.userData.blade) { m.userData.blade.rotation.z += (0.15 + state.windFactor * 0.6); } });
 
         let isPolluted = state.emissions > 50;
         let targetFogDensity = 0;
@@ -909,13 +923,13 @@ function runTick() {
         });
     }
 
-    // --- SABİT KAPASİTE FAKTÖRLERİYLE HAM ÜRETİM (1 MW kurulu güç x faktör = MWh) ---
+    // --- HAM ÜRETİM (sabit kaynaklar sabit faktörle, güneş/rüzgar gün boyu değişen faktörle) ---
     function rawZone(zoneStr) {
         let z = state.installed[zoneStr];
         return {
             coal: z.coal * CAPACITY_FACTOR.coal, gas: z.gas * CAPACITY_FACTOR.gas,
             geo: z.geo * CAPACITY_FACTOR.geo, hydro: z.hydro * CAPACITY_FACTOR.hydro,
-            solar: z.solar * CAPACITY_FACTOR.solar, wind: z.wind * CAPACITY_FACTOR.wind
+            solar: z.solar * state.solarFactor, wind: z.wind * state.windFactor
         };
     }
     let cityR = rawZone("city"); let ruralR = rawZone("rural");
@@ -928,7 +942,8 @@ function runTick() {
     let windProd = cityR.wind + ruralR.wind * 0.9;
 
     let totalRawProduction = coalProd + gasProd + geoProd + hydroProd + solarProd + windProd;
-    let currentDemand = state.population * state.demandPerPerson; // MWh
+    let currentDemandPerPerson = getCurrentDemandPerPerson();
+    let currentDemand = state.population * currentDemandPerPerson; // MWh
 
     // --- DEPOLAMA: fazla üretimin bir kısmını depola, açık verince depodan kullan ---
     let totalMaxStorage = 0;
@@ -963,6 +978,7 @@ function runTick() {
     let soldEnergy = Math.min(totalNetProduction, currentDemand);
     let wastedEnergy = Math.max(0, totalNetProduction - currentDemand);
     let netEnergy = totalNetProduction - currentDemand;
+    const BALANCE_TOLERANCE = 0.5; // MWh - bu aralıktaki fark "denge" sayılır, açık/kesinti değil
 
     let currentPrice = getCurrentPrice();
     let income = soldEnergy * currentPrice;
@@ -973,9 +989,12 @@ function runTick() {
     // BÜTÇE GÜNCELLEMESİ
     state.budget += (income - expense - carbonTax);
 
-    // NÜFUS ARTIŞI
-    if (totalNetProduction >= currentDemand && state.population < state.maxPopulation) state.population += 1;
-    else if (totalNetProduction < currentDemand) state.population -= 1;
+    // NÜFUS ARTIŞI (tolerans payı içinde kalan fark "denge" sayılır, kesinti tetiklemez)
+    if (netEnergy >= -BALANCE_TOLERANCE && state.population < state.maxPopulation) state.population += 1;
+    else if (netEnergy < -BALANCE_TOLERANCE) state.population -= 1;
+
+    // Nüfus, mevcut kapasiteyi (maxPopulation) hiçbir durumda aşamaz
+    state.population = Math.max(0, Math.min(state.population, state.maxPopulation));
 
     if (!simulatingOffline) {
         document.getElementById('budget').innerText = Math.floor(state.budget).toLocaleString();
@@ -1008,8 +1027,8 @@ function runTick() {
         document.getElementById('breakdownDetails').innerHTML = bdHtml || "Henüz üretim yapan santral yok.";
 
         document.getElementById('clockDisplay').innerText = (state.isDay ? "🌞 " : "🌙 ") + (state.hour < 10 ? "0" : "") + state.hour + ":00";
-        document.getElementById('solarDisplay').innerText = `Güneş KF: %${Math.floor(CAPACITY_FACTOR.solar * 100)}`;
-        document.getElementById('windDisplay').innerText = `Rüzgar KF: %${Math.floor(CAPACITY_FACTOR.wind * 100)}`;
+        document.getElementById('solarDisplay').innerText = `Güneş: %${Math.floor(state.solarFactor * 100)}`;
+        document.getElementById('windDisplay').innerText = `Rüzgar: %${Math.floor(state.windFactor * 100)}`;
 
         // --- KURULU GÜÇ PANELİ ---
         document.getElementById('installedTotal').innerText = getCapacity('coal') + getCapacity('gas') + getCapacity('geo') + getCapacity('hydro') + getCapacity('solar') + getCapacity('wind');
@@ -1052,11 +1071,11 @@ function runTick() {
             advisorDiv.innerHTML = `🚨 DANIŞMAN: Bütçen karbon vergisinden eriyor (-${carbonTax.toFixed(1)} 💰). Fosil yakıtları sök veya acilen <b>Ağaç Dik</b>!`;
             advisorDiv.className = "danger-advisor";
             currentAdvisorState = 'danger';
-        } else if (netEnergy < 0 && dischargedThisTick <= 0.01) {
+        } else if (netEnergy < -BALANCE_TOLERANCE && dischargedThisTick <= 0.01) {
             advisorDiv.innerHTML = `🚨 DANIŞMAN: Elektrik yetersiz! Şebeke çöküyor, nüfus azalıyor. Hemen yatırım yap veya <b>Depolama</b> kur!`;
             advisorDiv.className = "danger-advisor";
             currentAdvisorState = 'danger';
-        } else if (netEnergy < 0 && dischargedThisTick > 0.01) {
+        } else if (netEnergy < -BALANCE_TOLERANCE && dischargedThisTick > 0.01) {
             advisorDiv.innerHTML = `⚠️ DANIŞMAN: Üretim yetersiz ama depodan destek alınıyor (-${dischargedThisTick.toFixed(1)} MWh). Depo tükenmeden yeni kapasite ekle!`;
             advisorDiv.className = "warning-advisor";
             currentAdvisorState = 'warning';
@@ -1080,7 +1099,6 @@ function runTick() {
             else if (currentAdvisorState === 'good' && lastAdvisorState !== null) SoundEngine.stateGood();
             lastAdvisorState = currentAdvisorState;
         }
-        if (window.MusicEngine) { MusicEngine.ensureStarted(); MusicEngine.setMood(currentAdvisorState); }
     }
 
     checkGoals();
