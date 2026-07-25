@@ -666,10 +666,20 @@ function updateCostPreview() {
 }
 
 function updateUI() {
+
     document.getElementById('cityMaxDisplay').innerText = state.land.cityMax;
     document.getElementById('ruralMaxDisplay').innerText = state.land.ruralMax;
     document.getElementById('forestMaxDisplay').innerText = state.land.forestMax;
-    document.getElementById('maxPopDisplay').innerText = state.maxPopulation;
+
+    document.getElementById('population').innerText =
+        Math.floor(state.population);
+
+    document.getElementById('maxPopDisplay').innerText =
+        state.maxPopulation;
+
+    document.getElementById('budget').innerText =
+        Math.floor(state.budget);
+
 }
 
 function buildPlant(type) {
