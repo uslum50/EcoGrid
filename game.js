@@ -1,19 +1,33 @@
 // --- SİMÜLASYON DURUMU ---
 let state = {
-    budget: 100000, emissions: 0, totalOpex: 0, incomePerMw: 5.0, 
-    population: 1000, maxPopulation: 1000, demandPerPerson: 0.05,
-    hour: 8, isDay: true, windEfficiency: 1.0, solarEfficiency: 0.4, 
+    budget: 100000, emissions: 0, totalOpex: 0,
+    population: 1000, maxPopulation: 1000, demandPerPerson: 0.02, // 1000 kişi için 20 MWh -> kişi başı 0.02 MWh
+    hour: 8, isDay: true,
     land: { cityUsed: 0, cityMax: 500, ruralUsed: 0, ruralMax: 9000, forestUsed: 0, forestMax: 1000 },
     expansions: { city: 0, rural: 0, forest: 0 }, // Yeni eklenen zemin sayısını tutar
     installed: {
         city: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, solarStorage:0, windStorage:0, tree:0, house: 20 },
         rural: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, solarStorage:0, windStorage:0, tree:0, house:0 },
         forest: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, solarStorage:0, windStorage:0, tree:0, house:0 }
-    }
+    },
+    plantCounts: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, battery:0, tree:0, house:20 },
+    storageCharge: 0 // Depoda o an biriken toplam enerji (MWh)
 };
+
+// 1 MW kurulu güç başına saatlik ortalama üretim (kapasite faktörü, MWh)
+const CAPACITY_FACTOR = { coal: 0.75, gas: 0.63, solar: 0.21, wind: 0.33, geo: 0.83, hydro: 0.46 };
+
+// Zamana göre değişen satış fiyatı (💰/MWh)
+function getCurrentPrice() {
+    if (state.hour >= 7 && state.hour < 18) return 5.0;   // Gündüz
+    if (state.hour >= 18 && state.hour < 24) return 7.0;  // Akşam
+    return 4.0;                                            // Gece (00:00-07:00)
+}
 
 let currentPreviewType = 'solar'; 
 let lastAdvisorState = null; // Danışman durumu değiştiğinde tekrar tekrar ses çalmamak için
+let simulatingOffline = false; // Uzaktayken geçen süre hesaplanırken ses/alert bastırılır
+let structures = []; // Kurulan her tesisin {type, zone, capacity, row, col, batteryTarget} kaydı (kayıt/yükleme için)
 
 // HEDEFLER (GÖREVLER) - 3 Günlük, 1 Genel
 let dailyGoals = [];
@@ -22,7 +36,7 @@ let generalGoal = { type: 'pop', target: 2000, current: 1000, reward: 50000, des
 const plants = {
     gas:     { costPerMw: 1500, emissionPerMw: 0.8, opexPerMw: 2.0, landPerMw: 0.1, allowedInCity: false, name: "Doğalgaz", icon: "🔥", color: 0xe67e22, geometry: 'cylinder', modelPath: 'assets/models/power/gas.glb' },
     coal:    { costPerMw: 3000, emissionPerMw: 1.5, opexPerMw: 1.0, landPerMw: 0.2, allowedInCity: false, name: "Kömür", icon: "🏭", color: 0x34495e, geometry: 'box_tall', modelPath: 'assets/models/power/coal.glb' },
-    geo:     { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.5, landPerMw: 0.5, allowedInCity: false, name: "Jeotermal", icon: "🌋", color: 0xe74c3c, geometry: 'cylinder_low', modelPath: 'assets/models/power/geo.glb' },
+    geo:     { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.25,landPerMw: 0.5, allowedInCity: false, name: "Jeotermal", icon: "🌋", color: 0xe74c3c, geometry: 'cylinder_low', modelPath: 'assets/models/power/geo.glb' },
     hydro:   { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.1, landPerMw: 20.0,allowedInCity: false, name: "Hidrolik", icon: "🌊", color: 0x0984e3, geometry: 'box_wide', modelPath: 'assets/models/power/hydro.glb' },
     wind:    { costPerMw: 1800, emissionPerMw: 0,   opexPerMw: 0.3, landPerMw: 10.0,allowedInCity: false, name: "Rüzgar", icon: "🌬️", color: 0xffffff, geometry: 'turbine', modelPath: 'assets/models/power/wind.glb' },
     solar:   { costPerMw: 800,  emissionPerMw: 0,   opexPerMw: 0.1, landPerMw: 3.0, allowedInCity: true,  name: "Güneş", icon: "☀️", color: 0x111111, geometry: 'panel', modelPath: 'assets/models/power/solar.glb' },
@@ -80,9 +94,108 @@ window.SoundEngine = (function () {
             enabled = !enabled;
             try { localStorage.setItem('ecogrid_sound_enabled', enabled ? '1' : '0'); } catch (e) {}
             if (enabled) { getCtx(); beep(440, 0.08, 'sine', 0.1); }
+            if (window.MusicEngine) window.MusicEngine.setMuted(!enabled);
             return enabled;
         },
-        isEnabled: function () { return enabled; }
+        isEnabled: function () { return enabled; },
+        getContext: function () { return getCtx(); }
+    };
+})();
+
+// --- ARKA PLAN MÜZİĞİ (durum iyiyken huzurlu, tehlikedeyken karanlık/tehditkar - kesintisiz çalar) ---
+window.MusicEngine = (function () {
+    let started = false;
+    let muted = !window.SoundEngine.isEnabled();
+    let calmGain, tenseGain, master;
+    let lastMood = null;
+
+    function build() {
+        const ctx = window.SoundEngine.getContext();
+        if (!ctx || started) return;
+        started = true;
+
+        master = ctx.createGain();
+        master.gain.value = muted ? 0 : 0.5;
+        master.connect(ctx.destination);
+
+        // --- SAKİN KATMAN: yumuşak, parlak, huzurlu pad ---
+        calmGain = ctx.createGain();
+        calmGain.gain.value = 0.0001;
+        const calmFilter = ctx.createBiquadFilter();
+        calmFilter.type = 'lowpass';
+        calmFilter.frequency.value = 1200;
+        calmGain.connect(calmFilter);
+        calmFilter.connect(master);
+
+        const calmFreqs = [130.81, 164.81, 196.00, 246.94]; // C3 E3 G3 B3 - huzurlu majör akor
+        calmFreqs.forEach((f, i) => {
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.value = f;
+            const oscGain = ctx.createGain();
+            oscGain.gain.value = i === 0 ? 0.9 : 0.5;
+            osc.connect(oscGain);
+            oscGain.connect(calmGain);
+            osc.start();
+        });
+        // Yavaş "nefes alan" hareket için filtre üzerinde LFO
+        const calmLfo = ctx.createOscillator();
+        calmLfo.type = 'sine'; calmLfo.frequency.value = 0.07;
+        const calmLfoGain = ctx.createGain();
+        calmLfoGain.gain.value = 300;
+        calmLfo.connect(calmLfoGain); calmLfoGain.connect(calmFilter.frequency);
+        calmLfo.start();
+
+        // --- GERGİN KATMAN: alçak, çarpışan, tehditkar drone ---
+        tenseGain = ctx.createGain();
+        tenseGain.gain.value = 0.0001;
+        const tenseFilter = ctx.createBiquadFilter();
+        tenseFilter.type = 'lowpass';
+        tenseFilter.frequency.value = 500;
+        tenseGain.connect(tenseFilter);
+        tenseFilter.connect(master);
+
+        const drone1 = ctx.createOscillator(); drone1.type = 'sawtooth'; drone1.frequency.value = 55; // A1
+        const drone2 = ctx.createOscillator(); drone2.type = 'sawtooth'; drone2.frequency.value = 58.5; // hafif detune -> çarpışma/gerginlik
+        const tritone = ctx.createOscillator(); tritone.type = 'sine'; tritone.frequency.value = 77.78; // tritone -> huzursuzluk
+
+        const droneGain = ctx.createGain(); droneGain.gain.value = 0.5;
+        const tritoneGain = ctx.createGain(); tritoneGain.gain.value = 0.25;
+
+        drone1.connect(droneGain); drone2.connect(droneGain); tritone.connect(tritoneGain);
+        droneGain.connect(tenseGain); tritoneGain.connect(tenseGain);
+        drone1.start(); drone2.start(); tritone.start();
+
+        // Yavaş "kalp atışı" gibi tremolo (tehditkar nabız hissi)
+        const tenseLfo = ctx.createOscillator();
+        tenseLfo.type = 'sine'; tenseLfo.frequency.value = 0.5;
+        const tenseLfoGain = ctx.createGain();
+        tenseLfoGain.gain.value = 0.15;
+        tenseLfo.connect(tenseLfoGain); tenseLfoGain.connect(tenseGain.gain);
+        tenseLfo.start();
+    }
+
+    function rampTo(gainNode, value, seconds) {
+        if (!gainNode) return;
+        const ctx = window.SoundEngine.getContext();
+        if (!ctx) return;
+        gainNode.gain.cancelScheduledValues(ctx.currentTime);
+        gainNode.gain.setTargetAtTime(Math.max(value, 0.0001), ctx.currentTime, seconds / 3);
+    }
+
+    return {
+        ensureStarted: function () { if (!started) build(); },
+        setMood: function (mood) {
+            if (!started || mood === lastMood) return;
+            lastMood = mood;
+            if (mood === 'good') { rampTo(calmGain, 0.9, 3); rampTo(tenseGain, 0.0001, 3); }
+            else if (mood === 'danger') { rampTo(calmGain, 0.0001, 2); rampTo(tenseGain, 0.85, 2); }
+            else { rampTo(calmGain, 0.45, 3); rampTo(tenseGain, 0.4, 3); } // warning: gerilimli geçiş
+        },
+        setMuted: function (isMuted) {
+            muted = isMuted;
+            if (master) { const ctx = window.SoundEngine.getContext(); if (ctx) master.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.3); }
+        }
     };
 })();
 
@@ -119,7 +232,17 @@ container.appendChild(renderer.domElement);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.enableRotate = false; // Grid'in dönmesine gerek yok, sabit açıdan bakılsın
 controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+
+// Tüm zemin ve yapılar bu grup içine eklenir; harita genişledikçe bu grubu kaydırarak
+// görünümü her zaman ortalı tutuyoruz (döndürme yok, sadece merkezleme).
+const worldGroup = new THREE.Group();
+scene.add(worldGroup);
+let maxRowUsed = 19;
+function recenterWorld() {
+    worldGroup.position.z = (19 - maxRowUsed) / 2;
+}
 
 // SADECE GÖRÜNMEZ ÇİZGİLER (Artık devasa planlar yok, zeminleri kare kare kendimiz çizeceğiz)
 window.addEventListener('resize', () => {
@@ -207,7 +330,8 @@ function createGroundTile(row, col, zone) {
     edges.position.z = 0.002; // z-fighting önlemek için hafif yukarı (yerel eksende, döndürme sonrası yukarı karşılık gelir)
     tileMesh.add(edges);
 
-    scene.add(tileMesh);
+    worldGroup.add(tileMesh);
+    if (row > maxRowUsed) maxRowUsed = row;
     
     // Grid veritabanına kaydet
     gridMap.push({ row: row, col: col, zone: zone, isOccupied: false, visualMesh: tileMesh });
@@ -224,8 +348,85 @@ function initializeGround() {
 }
 initializeGround();
 
+// --- KAYIT / YÜKLEME SİSTEMİ (sayfa yenilense veya uygulama kapansa bile ilerleme kaybolmaz) ---
+const SAVE_KEY = 'ecogrid_save_v1';
+function saveGame() {
+    try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify({
+            state: state, dailyGoals: dailyGoals, generalGoal: generalGoal,
+            structures: structures, savedAt: Date.now()
+        }));
+    } catch (e) { /* depolama erişilemezse sessizce geç */ }
+}
+
+function loadGame() {
+    let raw;
+    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+    if (!raw) return false;
+    let data;
+    try { data = JSON.parse(raw); } catch (e) { return false; }
+    if (!data || !data.state) return false;
+
+    state = Object.assign(state, data.state);
+    dailyGoals = data.dailyGoals || dailyGoals;
+    generalGoal = data.generalGoal || generalGoal;
+    structures = data.structures || [];
+
+    // Satın alınmış ek arazileri (expansions) aynı algoritmayla tekrar çiz
+    ['city', 'rural', 'forest'].forEach(type => {
+        let totalExp = state.expansions[type] || 0;
+        for (let i = 0; i < totalExp; i++) {
+            let r = 0, c = 0;
+            if (type === 'city') { r = 20 + Math.floor(i / 2); c = i % 2; }
+            else if (type === 'forest') { r = 20 + Math.floor(i / 2); c = 18 + (i % 2); }
+            else if (type === 'rural') { r = 20 + Math.floor(i / 16); c = 2 + (i % 16); }
+            createGroundTile(r, c, type);
+        }
+    });
+    recenterWorld();
+
+    // Kayıtlı tesisleri sahneye geri koy
+    structures.forEach(s => {
+        let tile = gridMap.find(t => t.row === s.row && t.col === s.col && t.zone === s.zone);
+        let plant = plants[s.type];
+        if (!tile || !plant) return;
+        tile.isOccupied = true;
+        createMeshForPlant(s.type, plant.color, plant.geometry, plant.modelPath, function (mesh) {
+            mesh.position.x = s.col - 9.5;
+            mesh.position.z = s.row - 9.5;
+            mesh.userData = {
+                type: s.type, name: plant.name, icon: plant.icon, zone: s.zone, color: plant.color,
+                capacity: s.capacity, ems: s.capacity * plant.emissionPerMw, opex: s.capacity * plant.opexPerMw,
+                land: s.capacity * plant.landPerMw, batteryTarget: s.batteryTarget || '', gridRef: tile
+            };
+            worldGroup.add(mesh);
+            meshes.push(mesh);
+        });
+    });
+
+    // Uygulama kapalıyken/uzaktayken geçen süreyi hızlıca simüle et (arka planda "devam etmiş" gibi)
+    let elapsedSeconds = (Date.now() - (data.savedAt || Date.now())) / 1000;
+    let ticksToSimulate = Math.min(Math.floor(elapsedSeconds / 2.5), 400); // ~16 güne kadar telafi
+    if (ticksToSimulate > 1) {
+        simulatingOffline = true;
+        let startBudget = state.budget;
+        for (let i = 0; i < ticksToSimulate; i++) runTick();
+        simulatingOffline = false;
+        let deltaBudget = Math.floor(state.budget - startBudget);
+        setTimeout(() => {
+            alert(`⏱️ Uzaktayken geçen sürede şebeke ${ticksToSimulate} saat çalıştı.\nKasa değişimi: ${deltaBudget >= 0 ? '+' : ''}${deltaBudget.toLocaleString()} 💰\nNüfus: ${Math.floor(state.population)} kişi`);
+        }, 400);
+    }
+    return true;
+}
+
+// Kayıtlı oyun varsa yükle, yoksa sıfırdan başla
+if (!loadGame()) {
+    generateInitialCity();
+}
+
 // --- BAŞLANGIÇ ŞEHRİ (EVLERİ YERLEŞTİR) ---
-function generateInitialCity() {
+function generateInitialCity(skipRecord) {
     // Şehir karelerini bul
     let citySlots = gridMap.filter(t => t.zone === 'city');
     
@@ -240,12 +441,12 @@ function generateInitialCity() {
         houseGroup.position.set(randomTile.col - 9.5, 0, randomTile.row - 9.5);
         houseGroup.userData = { type: 'house', name: "Yerleşim", icon: "🏠", zone: 'city', capacity: 1, ems: 0.1, opex: 0.1, land: 5, gridRef: randomTile };
         
-        scene.add(houseGroup);
+        worldGroup.add(houseGroup);
         meshes.push(houseGroup);
+        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '' });
     }
-    state.land.cityUsed += 100; // 20 ev x 5 ha
+    if (!skipRecord) state.land.cityUsed += 100; // 20 ev x 5 ha
 }
-generateInitialCity();
 
 // --- ARAZİ SATIN ALMA (HARİTAYA ZEMİN EKLER) ---
 window.buyLand = function() {
@@ -271,10 +472,12 @@ window.buyLand = function() {
         createGroundTile(r, c, type);
         state.expansions[type]++;
     }
+    recenterWorld();
     
     let typeName = type === 'city' ? 'Şehir İçi' : (type === 'rural' ? 'Kırsal Alan' : 'Orman');
     alert(`Harika! ${typeName} haritada 50 ha genişledi. Uca eklenen yeni arazilere bakabilirsin!`);
     updateUI();
+    saveGame();
 };
 
 function animate() {
@@ -489,12 +692,31 @@ function buildPlant(type) {
 
     let batteryTarget = "";
     if (type === 'battery') {
-        let answer = prompt("Güneş için 'G', Rüzgar için 'R':").toUpperCase();
+        let answer = prompt("Güneş için 'G', Rüzgar için 'R':");
+        if (!answer) return;
+        answer = answer.toUpperCase();
         if (answer !== 'G' && answer !== 'R') return;
         batteryTarget = answer === 'G' ? 'solar' : 'wind';
         let availableUnstored = state.installed[zone][batteryTarget] - state.installed[zone][batteryTarget + 'Storage'];
-        if (capacity > availableUnstored) { alert("Yeterli boş tesis yok!"); return; }
+        if (capacity > availableUnstored) { SoundEngine.error(); alert("Yeterli boş tesis yok! Önce o kadar güneş/rüzgar kurulu olması lazım."); return; }
     }
+
+    // --- ÖNCE BİLGİLERİ GÖSTER, SONRA ONAY SOR ---
+    let capText = '';
+    if (type === 'tree') capText = `${capacity * 10} Bin Ağaç`;
+    else if (type === 'house') capText = `${capacity} Blok Ev (+${capacity * 50} Kapasite)`;
+    else capText = `${capacity} MW`;
+    let opexToAddPreview = (capacity * plant.opexPerMw).toFixed(2);
+
+    let confirmMsg = `${plant.icon} ${plant.name} KURULUMU\n\n` +
+        `Kapasite: ${capText}\n` +
+        `Yatırım: ${totalCost.toLocaleString()} 💰\n` +
+        `İşletme Gideri: -${opexToAddPreview} 💰/döngü\n` +
+        `Arazi Kullanımı: ${landToAdd.toFixed(1)} ha\n` +
+        (batteryTarget ? `Bağlanacağı Kaynak: ${batteryTarget === 'solar' ? 'Güneş' : 'Rüzgar'}\n` : '') +
+        `\nBu tesisi kurmak istediğine emin misin?`;
+
+    if (!confirm(confirmMsg)) return;
 
     SoundEngine.build();
     state.budget -= totalCost; 
@@ -513,6 +735,8 @@ function buildPlant(type) {
     else if (zone === "forest") state.land.forestUsed += landToAdd;
 
     emptyTile.isOccupied = true; // Zemin karesini dolu işaretle
+    state.plantCounts[type] = (state.plantCounts[type] || 0) + 1;
+    structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget });
 
     createMeshForPlant(type, plant.color, plant.geometry, plant.modelPath, function(mesh) {
         mesh.position.x = emptyTile.col - 9.5; 
@@ -524,11 +748,13 @@ function buildPlant(type) {
             batteryTarget: batteryTarget, gridRef: emptyTile
         };
 
-        scene.add(mesh);
+        worldGroup.add(mesh);
         meshes.push(mesh);
     });
     
     updateUI();
+    alert(`✅ ${plant.icon} ${plant.name} kuruldu! (${capText})`);
+    saveGame();
 }
 
 window.triggerUpgrade = function() {
@@ -568,9 +794,13 @@ window.triggerUpgrade = function() {
     d.capacity += extraCapacity;
     d.ems += extraEms; d.opex += extraOpex; d.land += extraLand;
     
+    let structEntry = structures.find(s => s.row === d.gridRef.row && s.col === d.gridRef.col);
+    if (structEntry) structEntry.capacity = d.capacity;
+    
     selectedMesh.scale.y += 0.2; selectedMesh.position.y += 0.1;
     closeActionMenu();
     updateUI();
+    saveGame();
 };
 
 window.triggerDemolish = function() {
@@ -591,10 +821,13 @@ window.triggerDemolish = function() {
         else if (d.zone === "forest") state.land.forestUsed = Math.max(0, state.land.forestUsed - d.land);
 
         d.gridRef.isOccupied = false; // Zemini boşalt
-        scene.remove(selectedMesh);
+        state.plantCounts[d.type] = Math.max(0, (state.plantCounts[d.type] || 0) - 1);
+        structures = structures.filter(s => !(s.row === d.gridRef.row && s.col === d.gridRef.col));
+        worldGroup.remove(selectedMesh);
         meshes = meshes.filter(m => m !== selectedMesh);
         closeActionMenu();
         updateUI();
+        saveGame();
     }
 };
 
@@ -626,9 +859,11 @@ function checkGoals() {
     dailyGoals.forEach((goal, index) => {
         goal.current = getCapacity(goal.type);
         if (goal.current >= goal.target) {
-            SoundEngine.goal();
             state.budget += goal.reward;
-            alert(`🎉 GÜNLÜK GÖREV BAŞARILI: ${goal.desc}! \nKasa: +${goal.reward.toLocaleString()} 💰`);
+            if (!simulatingOffline) {
+                SoundEngine.goal();
+                alert(`🎉 GÜNLÜK GÖREV BAŞARILI: ${goal.desc}! \nKasa: +${goal.reward.toLocaleString()} 💰`);
+            }
             dailyGoals[index] = generateDailyGoal(); // Yenisini oluştur
         }
         html += `<div class="goal-item">📌 ${goal.desc}<br>Durum: ${goal.current} / ${goal.target} <br><span style="color:#27ae60;">Ödül: ${goal.reward.toLocaleString()} 💰</span></div>`;
@@ -639,9 +874,11 @@ function checkGoals() {
     // Genel Görev Kontrolü
     generalGoal.current = state.population;
     if (generalGoal.current >= generalGoal.target) {
-        SoundEngine.goal();
         state.budget += generalGoal.reward;
-        alert(`🏆 GENEL GÖREV BAŞARILI: ${generalGoal.desc}! \nKasa: +${generalGoal.reward.toLocaleString()} 💰`);
+        if (!simulatingOffline) {
+            SoundEngine.goal();
+            alert(`🏆 GENEL GÖREV BAŞARILI: ${generalGoal.desc}! \nKasa: +${generalGoal.reward.toLocaleString()} 💰`);
+        }
         let newTarget = generalGoal.target + 1000;
         generalGoal = { type: 'pop', target: newTarget, current: state.population, reward: newTarget * 30, desc: `Şehir nüfusunu ${newTarget}'e ulaştır` };
     }
@@ -649,67 +886,86 @@ function checkGoals() {
 }
 
 // --- DÖNGÜ VE EFEKTLER ---
-setInterval(() => {
+function runTick() {
     state.hour++;
     if (state.hour > 23) state.hour = 0;
-    state.isDay = (state.hour >= 6 && state.hour <= 18);
-    
-    if (state.hour >= 6 && state.hour <= 9) state.solarEfficiency = 0.4;
-    else if (state.hour >= 10 && state.hour <= 14) state.solarEfficiency = 1.0;
-    else if (state.hour >= 15 && state.hour <= 18) state.solarEfficiency = 0.6;
-    else state.solarEfficiency = 0.0;
+    state.isDay = (state.hour >= 7 && state.hour < 18);
 
-    if (Math.random() > 0.8) state.windEfficiency = (Math.floor(Math.random() * 60) + 40) / 100;
+    if (!simulatingOffline) {
+        meshes.forEach(m => { if (m.userData && m.userData.isWind && m.userData.blade) { m.userData.blade.rotation.z += 0.3; } });
 
-    meshes.forEach(m => { if (m.userData && m.userData.isWind && m.userData.blade) { m.userData.blade.rotation.z += (0.5 * state.windEfficiency); } });
+        let isPolluted = state.emissions > 50;
+        let targetFogDensity = 0;
+        if (isPolluted) { scene.background.lerp(new THREE.Color('#7f8c8d'), 0.1); targetFogDensity = Math.min((state.emissions - 50) * 0.001, 0.08); } 
+        else { if(state.isDay) scene.background.lerp(new THREE.Color('#ecf0f1'), 0.1); else scene.background.lerp(new THREE.Color('#1a252f'), 0.1); }
+        scene.fog.density += (targetFogDensity - scene.fog.density) * 0.1;
 
-    let isPolluted = state.emissions > 50;
-    let targetFogDensity = 0;
-    if (isPolluted) { scene.background.lerp(new THREE.Color('#7f8c8d'), 0.1); targetFogDensity = Math.min((state.emissions - 50) * 0.001, 0.08); } 
-    else { if(state.isDay) scene.background.lerp(new THREE.Color('#ecf0f1'), 0.1); else scene.background.lerp(new THREE.Color('#1a252f'), 0.1); }
-    scene.fog.density += (targetFogDensity - scene.fog.density) * 0.1;
-
-    meshes.forEach(mesh => {
-        if (!state.isDay && mesh.userData && mesh.userData.type !== 'tree') {
-            mesh.children.forEach(child => { if(child.material) { child.material.emissive.setHex(mesh.userData.color); child.material.emissiveIntensity = 0.4; } });
-        } else {
-            mesh.children.forEach(child => { if(child.material) child.material.emissive.setHex(0x000000); });
-        }
-    });
-
-    function calcProduction(zoneStr) {
-        let z = state.installed[zoneStr];
-        let base = z.coal + z.gas + z.geo + z.hydro;
-        let rawSolar = z.solar * state.solarEfficiency;
-        let solarOutput = 0; let solarBatteryOutput = 0;
-
-        if (state.isDay) { let chargeAmount = Math.min(rawSolar, z.solarStorage); solarOutput = rawSolar - chargeAmount; solarBatteryOutput = 0; } 
-        else { solarOutput = 0; solarBatteryOutput = z.solarStorage; }
-
-        let rawWind = z.wind * state.windEfficiency;
-        let windOutput = 0; let windBatteryOutput = 0;
-
-        if (state.windEfficiency > 0.5) { let chargeAmount = Math.min(rawWind, z.windStorage); windOutput = rawWind - chargeAmount; windBatteryOutput = 0; } 
-        else { windOutput = rawWind; windBatteryOutput = z.windStorage; }
-
-        return { total: base + solarOutput + solarBatteryOutput + windOutput + windBatteryOutput, coal: z.coal, gas: z.gas, geo: z.geo, hydro: z.hydro, solar: solarOutput, wind: windOutput, stored: solarBatteryOutput + windBatteryOutput };
+        meshes.forEach(mesh => {
+            if (!state.isDay && mesh.userData && mesh.userData.type !== 'tree') {
+                mesh.children.forEach(child => { if(child.material) { child.material.emissive.setHex(mesh.userData.color); child.material.emissiveIntensity = 0.4; } });
+            } else {
+                mesh.children.forEach(child => { if(child.material) child.material.emissive.setHex(0x000000); });
+            }
+        });
     }
 
-    let cityData = calcProduction("city"); let ruralData = calcProduction("rural");
-    
-    let coalProd = cityData.coal + (ruralData.coal * 0.9); let gasProd = cityData.gas + (ruralData.gas * 0.9);
-    let solarProd = cityData.solar + (ruralData.solar * 0.9); let windProd = cityData.wind + (ruralData.wind * 0.9);
-    let baseProd = cityData.geo + cityData.hydro + ((ruralData.geo + ruralData.hydro) * 0.9);
-    let storedProd = cityData.stored + (ruralData.stored * 0.9);
+    // --- SABİT KAPASİTE FAKTÖRLERİYLE HAM ÜRETİM (1 MW kurulu güç x faktör = MWh) ---
+    function rawZone(zoneStr) {
+        let z = state.installed[zoneStr];
+        return {
+            coal: z.coal * CAPACITY_FACTOR.coal, gas: z.gas * CAPACITY_FACTOR.gas,
+            geo: z.geo * CAPACITY_FACTOR.geo, hydro: z.hydro * CAPACITY_FACTOR.hydro,
+            solar: z.solar * CAPACITY_FACTOR.solar, wind: z.wind * CAPACITY_FACTOR.wind
+        };
+    }
+    let cityR = rawZone("city"); let ruralR = rawZone("rural");
 
-    let totalNetProduction = coalProd + gasProd + solarProd + windProd + baseProd + storedProd;
-    let currentDemand = state.population * state.demandPerPerson;
-    
+    let coalProd = cityR.coal + ruralR.coal * 0.9;
+    let gasProd = cityR.gas + ruralR.gas * 0.9;
+    let geoProd = cityR.geo + ruralR.geo * 0.9;
+    let hydroProd = cityR.hydro + ruralR.hydro * 0.9;
+    let solarProd = cityR.solar + ruralR.solar * 0.9;
+    let windProd = cityR.wind + ruralR.wind * 0.9;
+
+    let totalRawProduction = coalProd + gasProd + geoProd + hydroProd + solarProd + windProd;
+    let currentDemand = state.population * state.demandPerPerson; // MWh
+
+    // --- DEPOLAMA: fazla üretimin bir kısmını depola, açık verince depodan kullan ---
+    let totalMaxStorage = 0;
+    ['city','rural','forest'].forEach(z => { totalMaxStorage += state.installed[z].solarStorage + state.installed[z].windStorage; });
+    state.storageCharge = Math.min(state.storageCharge, totalMaxStorage);
+
+    let netBeforeStorage = totalRawProduction - currentDemand;
+    let storedThisTick = 0, dischargedThisTick = 0;
+    let totalNetProduction = totalRawProduction;
+    let storageMsg = null;
+
+    if (netBeforeStorage > 0) {
+        let solarWindRaw = solarProd + windProd;
+        let storableSurplus = Math.min(netBeforeStorage, solarWindRaw) * 0.5; // fazlanın yarısı depolanır
+        let roomLeft = totalMaxStorage - state.storageCharge;
+        storedThisTick = Math.max(0, Math.min(storableSurplus, roomLeft));
+        if (storedThisTick > 0.01) {
+            state.storageCharge += storedThisTick;
+            totalNetProduction -= storedThisTick;
+            storageMsg = { type: 'charge', text: `🔋 Depolama yapılıyor: +${storedThisTick.toFixed(1)} MWh depoya aktarılıyor (${state.storageCharge.toFixed(1)}/${totalMaxStorage.toFixed(1)} MWh)` };
+        }
+    } else if (netBeforeStorage < 0) {
+        let deficit = -netBeforeStorage;
+        dischargedThisTick = Math.max(0, Math.min(deficit, state.storageCharge));
+        if (dischargedThisTick > 0.01) {
+            state.storageCharge -= dischargedThisTick;
+            totalNetProduction += dischargedThisTick;
+            storageMsg = { type: 'discharge', text: `🔋 Depolamadan kullanılıyor: -${dischargedThisTick.toFixed(1)} MWh depodan çekildi (Kalan: ${state.storageCharge.toFixed(1)}/${totalMaxStorage.toFixed(1)} MWh)` };
+        }
+    }
+
     let soldEnergy = Math.min(totalNetProduction, currentDemand);
     let wastedEnergy = Math.max(0, totalNetProduction - currentDemand);
     let netEnergy = totalNetProduction - currentDemand;
 
-    let income = soldEnergy * state.incomePerMw;
+    let currentPrice = getCurrentPrice();
+    let income = soldEnergy * currentPrice;
     let expense = state.totalOpex;
     let displayEms = Math.max(0, state.emissions); 
     let carbonTax = displayEms > 50 ? (displayEms - 50) * 1.5 : 0; 
@@ -721,68 +977,114 @@ setInterval(() => {
     if (totalNetProduction >= currentDemand && state.population < state.maxPopulation) state.population += 1;
     else if (totalNetProduction < currentDemand) state.population -= 1;
 
-    document.getElementById('budget').innerText = Math.floor(state.budget).toLocaleString();
-    document.getElementById('emissions').innerText = displayEms.toFixed(1);
-    
-    document.getElementById('population').innerText = Math.floor(state.population);
-    document.getElementById('demand').innerText = Math.floor(currentDemand);
-    
-    document.getElementById('energy').innerText = Math.floor(totalNetProduction);
-    document.getElementById('soldEnergy').innerText = Math.floor(soldEnergy);
-    
-    document.getElementById('cityLand').innerText = Math.floor(state.land.cityUsed);
-    document.getElementById('ruralLand').innerText = Math.floor(state.land.ruralUsed);
-    document.getElementById('forestLand').innerText = Math.floor(state.land.forestUsed);
-    
-    let breakdownHtml = `<span style="color:#2ecc71;">+${income.toFixed(1)} 💰 Gelir</span> | <span style="color:#e74c3c;">-${expense.toFixed(1)} 💰 Gider</span>`;
-    if (carbonTax > 0) breakdownHtml += ` | <span class="tax-alert">-${carbonTax.toFixed(1)} 💰 Vergi</span>`;
-    document.getElementById('budgetBreakdown').innerHTML = breakdownHtml;
+    if (!simulatingOffline) {
+        document.getElementById('budget').innerText = Math.floor(state.budget).toLocaleString();
+        document.getElementById('emissions').innerText = displayEms.toFixed(1);
+        
+        document.getElementById('population').innerText = Math.floor(state.population);
+        document.getElementById('demand').innerText = currentDemand.toFixed(1);
+        
+        document.getElementById('energy').innerText = totalNetProduction.toFixed(1);
+        document.getElementById('soldEnergy').innerText = soldEnergy.toFixed(1);
+        
+        document.getElementById('cityLand').innerText = Math.floor(state.land.cityUsed);
+        document.getElementById('ruralLand').innerText = Math.floor(state.land.ruralUsed);
+        document.getElementById('forestLand').innerText = Math.floor(state.land.forestUsed);
+        
+        let breakdownHtml = `<span style="color:#2ecc71;">+${income.toFixed(1)} 💰 Gelir</span> | <span style="color:#e74c3c;">-${expense.toFixed(1)} 💰 Gider</span>`;
+        if (carbonTax > 0) breakdownHtml += ` | <span class="tax-alert">-${carbonTax.toFixed(1)} 💰 Vergi</span>`;
+        breakdownHtml += ` | <span style="color:#f1c40f;">Fiyat: ${currentPrice.toFixed(1)} 💰/MWh</span>`;
+        document.getElementById('budgetBreakdown').innerHTML = breakdownHtml;
 
-    let bdHtml = "";
-    if(coalProd > 0) bdHtml += `<div class="income-row"><span>🏭 Kömür:</span> <span>${coalProd.toFixed(1)} MW</span></div>`;
-    if(gasProd > 0) bdHtml += `<div class="income-row"><span>🔥 Doğalgaz:</span> <span>${gasProd.toFixed(1)} MW</span></div>`;
-    if(solarProd > 0) bdHtml += `<div class="income-row"><span>☀️ Güneş:</span> <span>${solarProd.toFixed(1)} MW</span></div>`;
-    if(windProd > 0) bdHtml += `<div class="income-row"><span>🌬️ Rüzgar:</span> <span>${windProd.toFixed(1)} MW</span></div>`;
-    if(baseProd > 0) bdHtml += `<div class="income-row"><span>🌋/🌊 Sabit Temiz:</span> <span>${baseProd.toFixed(1)} MW</span></div>`;
-    if(storedProd > 0) bdHtml += `<div class="income-row"><span>🔋 Batarya:</span> <span style="color:#2ecc71;">${storedProd.toFixed(1)} MW</span></div>`;
-    
-    document.getElementById('breakdownDetails').innerHTML = bdHtml || "Henüz üretim yapan santral yok.";
+        let bdHtml = "";
+        if(coalProd > 0) bdHtml += `<div class="income-row"><span>🏭 Kömür:</span> <span>${coalProd.toFixed(1)} MWh</span></div>`;
+        if(gasProd > 0) bdHtml += `<div class="income-row"><span>🔥 Doğalgaz:</span> <span>${gasProd.toFixed(1)} MWh</span></div>`;
+        if(solarProd > 0) bdHtml += `<div class="income-row"><span>☀️ Güneş:</span> <span>${solarProd.toFixed(1)} MWh</span></div>`;
+        if(windProd > 0) bdHtml += `<div class="income-row"><span>🌬️ Rüzgar:</span> <span>${windProd.toFixed(1)} MWh</span></div>`;
+        if(geoProd + hydroProd > 0) bdHtml += `<div class="income-row"><span>🌋/🌊 Jeo/Hidro:</span> <span>${(geoProd+hydroProd).toFixed(1)} MWh</span></div>`;
+        if (storedThisTick > 0.01) bdHtml += `<div class="income-row"><span style="color:#8e44ad;">🔋 Depoya Giden:</span> <span style="color:#8e44ad;">-${storedThisTick.toFixed(1)} MWh</span></div>`;
+        if (dischargedThisTick > 0.01) bdHtml += `<div class="income-row"><span style="color:#2ecc71;">🔋 Depodan Gelen:</span> <span style="color:#2ecc71;">+${dischargedThisTick.toFixed(1)} MWh</span></div>`;
+        
+        document.getElementById('breakdownDetails').innerHTML = bdHtml || "Henüz üretim yapan santral yok.";
 
-    document.getElementById('clockDisplay').innerText = (state.isDay ? "🌞 " : "🌙 ") + (state.hour < 10 ? "0" : "") + state.hour + ":00";
-    document.getElementById('solarDisplay').innerText = `Güneş: %${Math.floor(state.solarEfficiency * 100)}`;
-    document.getElementById('windDisplay').innerText = `Rüzgar: %${Math.floor(state.windEfficiency * 100)}`;
-    
-    let advisorDiv = document.getElementById('advisor-message');
-    let currentAdvisorState = 'warning';
-    if (displayEms > 50) {
-        advisorDiv.innerHTML = `🚨 DANIŞMAN: Bütçen karbon vergisinden eriyor (-${carbonTax.toFixed(1)} 💰). Fosil yakıtları sök veya acilen <b>Ağaç Dik</b>!`;
-        advisorDiv.className = "danger-advisor";
-        currentAdvisorState = 'danger';
-    } else if (netEnergy < 0) {
-        advisorDiv.innerHTML = `🚨 DANIŞMAN: Elektrik yetersiz! Şebeke çöküyor, nüfus azalıyor. Hemen yatırım yap veya <b>Depolama</b> kur!`;
-        advisorDiv.className = "danger-advisor";
-        currentAdvisorState = 'danger';
-    } else if (state.population >= state.maxPopulation && totalNetProduction >= currentDemand) {
-        advisorDiv.innerHTML = `⚠️ DANIŞMAN: Şehirde boş ev kalmadı! Nüfusun artması için yeni <b>Ev Kur</b> veya <b>Arazi Satın Al</b>.`;
-        advisorDiv.className = "warning-advisor";
-        currentAdvisorState = 'warning';
-    } else if (wastedEnergy > 20) {
-        advisorDiv.innerHTML = `⚠️ DANIŞMAN: ${Math.floor(wastedEnergy)} MW israf var. Gelir getirmiyor ama bakım masrafı kesiliyor! Tesis sök.`;
-        advisorDiv.className = "warning-advisor";
-        currentAdvisorState = 'warning';
-    } else {
-        advisorDiv.innerHTML = `✅ DANIŞMAN: Şebeke kusursuz işliyor. Elektrik talebi tam karşılanıyor, şehir büyüyor.`;
-        advisorDiv.className = "success-advisor";
-        currentAdvisorState = 'good';
-    }
+        document.getElementById('clockDisplay').innerText = (state.isDay ? "🌞 " : "🌙 ") + (state.hour < 10 ? "0" : "") + state.hour + ":00";
+        document.getElementById('solarDisplay').innerText = `Güneş KF: %${Math.floor(CAPACITY_FACTOR.solar * 100)}`;
+        document.getElementById('windDisplay').innerText = `Rüzgar KF: %${Math.floor(CAPACITY_FACTOR.wind * 100)}`;
 
-    // Durum değiştiğinde (her 2.5sn'de bir değil, sadece geçişte) sesli uyarı ver
-    if (currentAdvisorState !== lastAdvisorState) {
-        if (currentAdvisorState === 'danger') SoundEngine.stateAlarm();
-        else if (currentAdvisorState === 'good' && lastAdvisorState !== null) SoundEngine.stateGood();
-        lastAdvisorState = currentAdvisorState;
+        // --- KURULU GÜÇ PANELİ ---
+        document.getElementById('installedTotal').innerText = getCapacity('coal') + getCapacity('gas') + getCapacity('geo') + getCapacity('hydro') + getCapacity('solar') + getCapacity('wind');
+        let genList = [
+            { key: 'coal', icon: '🏭', name: 'Kömür' }, { key: 'gas', icon: '🔥', name: 'Doğalgaz' },
+            { key: 'solar', icon: '☀️', name: 'Güneş' }, { key: 'wind', icon: '🌬️', name: 'Rüzgar' },
+            { key: 'geo', icon: '🌋', name: 'Jeotermal' }, { key: 'hydro', icon: '🌊', name: 'Hidrolik' }
+        ];
+        let instHtml = "";
+        genList.forEach(p => {
+            let count = state.plantCounts[p.key] || 0;
+            if (count > 0) instHtml += `<div class="income-row"><span>${p.icon} ${p.name}:</span> <span>${count} adet, ${getCapacity(p.key).toFixed(0)} MW</span></div>`;
+        });
+        let batCount = state.plantCounts.battery || 0;
+        if (batCount > 0) instHtml += `<div class="income-row"><span>🔋 Depolama:</span> <span>${batCount} adet, ${totalMaxStorage.toFixed(0)} MW kapasite</span></div>`;
+        let treeCount = state.plantCounts.tree || 0;
+        if (treeCount > 0) instHtml += `<div class="income-row"><span>🌳 Ağaç:</span> <span>${treeCount} adet, ${(getCapacity('tree')*10).toFixed(0)} Bin Ağaç</span></div>`;
+        let houseCount = state.plantCounts.house || 0;
+        if (houseCount > 0) instHtml += `<div class="income-row"><span>🏠 Ev:</span> <span>${houseCount} adet, ${getCapacity('house')} Blok</span></div>`;
+        document.getElementById('installedDetails').innerHTML = instHtml || "Henüz tesis kurulmadı.";
+
+        // --- DEPOLAMA DURUM SATIRI ---
+        let storageStatusDiv = document.getElementById('storage-status');
+        if (totalMaxStorage > 0) {
+            storageStatusDiv.style.display = 'block';
+            if (storageMsg) {
+                storageStatusDiv.innerHTML = storageMsg.text;
+                storageStatusDiv.style.color = storageMsg.type === 'charge' ? '#8e44ad' : '#d35400';
+            } else {
+                storageStatusDiv.innerHTML = `🔋 Depo Durumu: ${state.storageCharge.toFixed(1)} / ${totalMaxStorage.toFixed(1)} MWh (beklemede)`;
+                storageStatusDiv.style.color = '#7f8c8d';
+            }
+        } else {
+            storageStatusDiv.style.display = 'none';
+        }
+        
+        let advisorDiv = document.getElementById('advisor-message');
+        let currentAdvisorState = 'warning';
+        if (displayEms > 50) {
+            advisorDiv.innerHTML = `🚨 DANIŞMAN: Bütçen karbon vergisinden eriyor (-${carbonTax.toFixed(1)} 💰). Fosil yakıtları sök veya acilen <b>Ağaç Dik</b>!`;
+            advisorDiv.className = "danger-advisor";
+            currentAdvisorState = 'danger';
+        } else if (netEnergy < 0 && dischargedThisTick <= 0.01) {
+            advisorDiv.innerHTML = `🚨 DANIŞMAN: Elektrik yetersiz! Şebeke çöküyor, nüfus azalıyor. Hemen yatırım yap veya <b>Depolama</b> kur!`;
+            advisorDiv.className = "danger-advisor";
+            currentAdvisorState = 'danger';
+        } else if (netEnergy < 0 && dischargedThisTick > 0.01) {
+            advisorDiv.innerHTML = `⚠️ DANIŞMAN: Üretim yetersiz ama depodan destek alınıyor (-${dischargedThisTick.toFixed(1)} MWh). Depo tükenmeden yeni kapasite ekle!`;
+            advisorDiv.className = "warning-advisor";
+            currentAdvisorState = 'warning';
+        } else if (state.population >= state.maxPopulation && totalNetProduction >= currentDemand) {
+            advisorDiv.innerHTML = `⚠️ DANIŞMAN: Şehirde boş ev kalmadı! Nüfusun artması için yeni <b>Ev Kur</b> veya <b>Arazi Satın Al</b>.`;
+            advisorDiv.className = "warning-advisor";
+            currentAdvisorState = 'warning';
+        } else if (wastedEnergy > 20) {
+            advisorDiv.innerHTML = `⚠️ DANIŞMAN: ${wastedEnergy.toFixed(1)} MWh israf var. Gelir getirmiyor ama bakım masrafı kesiliyor! Tesis sök ya da Depolama kur.`;
+            advisorDiv.className = "warning-advisor";
+            currentAdvisorState = 'warning';
+        } else {
+            advisorDiv.innerHTML = `✅ DANIŞMAN: Şebeke kusursuz işliyor. Elektrik talebi tam karşılanıyor, şehir büyüyor.`;
+            advisorDiv.className = "success-advisor";
+            currentAdvisorState = 'good';
+        }
+
+        // Durum değiştiğinde (her 2.5sn'de bir değil, sadece geçişte) sesli uyarı ver
+        if (currentAdvisorState !== lastAdvisorState) {
+            if (currentAdvisorState === 'danger') SoundEngine.stateAlarm();
+            else if (currentAdvisorState === 'good' && lastAdvisorState !== null) SoundEngine.stateGood();
+            lastAdvisorState = currentAdvisorState;
+        }
+        if (window.MusicEngine) { MusicEngine.ensureStarted(); MusicEngine.setMood(currentAdvisorState); }
     }
 
     checkGoals();
+    saveGame();
+}
 
-}, 2500);
+setInterval(runTick, 2500);
