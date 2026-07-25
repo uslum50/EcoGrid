@@ -1003,12 +1003,12 @@ function runTick() {
         });
     }
 
-    // --- SANTRAL SAĞLIĞI: tablo değerleri yüzde/gün (örn. 0.10 = %10/gün), saatlik kayıp = (yüzde*100)/24 puan ---
+    // --- SANTRAL SAĞLIĞI: her saatte günlük kayıp/24 kadar sağlık düşer ---
     structures.forEach(s => {
-        let dailyDecayFraction = HEALTH_DECAY_PER_DAY[s.type];
-        if (!dailyDecayFraction) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
+        let dailyDecay = HEALTH_DECAY_PER_DAY[s.type];
+        if (!dailyDecay) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
         if (s.health === undefined || s.health === null) s.health = 100;
-        if (s.health > 0) s.health = Math.max(0, s.health - (dailyDecayFraction * 100 / 24));
+        if (s.health > 0) s.health = Math.max(0, s.health - (dailyDecay / 24));
     });
 
     // --- HAM ÜRETİM: her tesisin GÜNCEL SAĞLIĞIYLA orantılı kapasitesi üzerinden hesaplanır ---
