@@ -46,6 +46,73 @@ function getCurrentPrice() {
     return 4.0;                                            // Gece (00:00-07:00)
 }
 
+// Her 24 saatlik döngüde (1 gün) santralin kaybettiği sağlık yüzdesi
+const HEALTH_DECAY_PER_DAY = { hydro: 0.02, solar: 0.04, wind: 0.06, geo: 0.07, coal: 0.10, gas: 0.12, battery: 0.20 };
+// MW başına bakım maliyeti (💰)
+const MAINTENANCE_COST_PER_MW = { hydro: 10, solar: 20, wind: 30, geo: 40, battery: 50, coal: 60, gas: 70 };
+function getMaintenanceMultiplier(health) {
+    if (health > 70) return 1;
+    if (health >= 50) return 2;
+    if (health >= 10) return 3;
+    return null; // %10 altı: bakım yapılamaz
+}
+
+function updateMaintenancePanel() {
+    let panel = document.getElementById('maintenanceDetails');
+    if (!panel) return;
+    let list = structures.filter(s => HEALTH_DECAY_PER_DAY[s.type] !== undefined).slice().sort((a, b) => a.health - b.health);
+    if (list.length === 0) { panel.innerHTML = "Henüz bakım gerektiren bir tesis yok."; return; }
+
+    let html = "";
+    list.forEach(s => {
+        let plant = plants[s.type];
+        let health = (s.health === undefined || s.health === null) ? 100 : s.health;
+        let mult = getMaintenanceMultiplier(health);
+        let color = health < 10 ? '#7f8c8d' : (health > 70 ? '#27ae60' : (health >= 50 ? '#f39c12' : '#e74c3c'));
+        let statusText = health < 10 ? 'KAPANDI ⛔' : `%${health.toFixed(0)}`;
+        let btnHtml;
+        if (mult === null) {
+            btnHtml = `<button class="build-btn" style="background:#7f8c8d; color:#fff; opacity:0.7;" disabled>Kapandı - Sökülmeli</button>`;
+        } else {
+            let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult);
+            btnHtml = `<button class="build-btn" style="background:#16a085; color:#fff;" onclick="repairPlant(${s.row},${s.col})">🔧 Bakım Yap (${cost.toLocaleString()} 💰)</button>`;
+        }
+        html += `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #ecf0f1; flex-wrap:wrap;">
+            <div style="min-width:140px;">
+                <div><b>${plant.icon} ${plant.name}</b> — ${s.capacity} MW (${s.zone === 'city' ? 'Şehir' : s.zone === 'rural' ? 'Kırsal' : 'Orman'})</div>
+                <div style="font-size:12px; color:${color}; font-weight:bold;">Sağlık: ${statusText}</div>
+            </div>
+            ${btnHtml}
+        </div>`;
+    });
+    panel.innerHTML = html;
+}
+
+window.repairPlant = function (row, col) {
+    let s = structures.find(st => st.row === row && st.col === col);
+    if (!s) return;
+    let health = (s.health === undefined || s.health === null) ? 100 : s.health;
+    let mult = getMaintenanceMultiplier(health);
+    let plant = plants[s.type];
+
+    if (mult === null) { SoundEngine.error(); showAlert(`Bu tesisin sağlığı %10'un altına düştü, artık bakım yapılamaz. Söküp yeniden kurman gerekiyor.`); return; }
+
+    let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult);
+    showConfirm(
+        `🔧 ${plant.icon} ${plant.name} BAKIMI\n\nMevcut Sağlık: %${health.toFixed(0)}\nMaliyet Çarpanı: ${mult}x\nToplam Maliyet: ${cost.toLocaleString()} 💰\n\nBakım yapılıp sağlık %100'e çıkarılsın mı?`,
+        function () {
+            if (state.budget < cost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
+            state.budget -= cost;
+            s.health = 100;
+            SoundEngine.upgrade();
+            showAlert(`✅ ${plant.icon} ${plant.name} bakımı tamamlandı! Sağlık %100'e çıktı.`);
+            updateMaintenancePanel();
+            updateUI();
+            saveGame();
+        }
+    );
+};
+
 let currentPreviewType = 'solar'; 
 let lastAdvisorState = null; // Danışman durumu değiştiğinde tekrar tekrar ses çalmamak için
 let simulatingOffline = false; // Uzaktayken geçen süre hesaplanırken ses/alert bastırılır
@@ -375,6 +442,7 @@ function loadGame() {
     dailyGoals = data.dailyGoals || dailyGoals;
     generalGoal = data.generalGoal || generalGoal;
     structures = data.structures || [];
+    structures.forEach(s => { if (s.health === undefined || s.health === null) s.health = 100; });
 
     // Satın alınmış ek arazileri (expansions) aynı algoritmayla tekrar çiz
     ['city', 'rural', 'forest'].forEach(type => {
@@ -429,6 +497,7 @@ if (!loadGame()) {
     generateInitialCity();
 }
 updateUI(); // Kaydedilmiş kapasite/arazi değerlerini ekrana hemen yansıt (sayfa yenilendiğinde varsayılan değerlerde takılı kalmasın)
+updateMaintenancePanel();
 
 // --- BAŞLANGIÇ ŞEHRİ (EVLERİ YERLEŞTİR) ---
 function generateInitialCity(skipRecord) {
@@ -448,7 +517,7 @@ function generateInitialCity(skipRecord) {
         
         worldGroup.add(houseGroup);
         meshes.push(houseGroup);
-        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '' });
+        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '', health: 100 });
     }
     if (!skipRecord) state.land.cityUsed += 100; // 20 ev x 5 ha
 }
@@ -755,7 +824,7 @@ function confirmAndBuild(type, zone, capacity, plant, emptyTile, landToAdd, tota
 
         emptyTile.isOccupied = true; // Zemin karesini dolu işaretle
         state.plantCounts[type] = (state.plantCounts[type] || 0) + 1;
-        structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget });
+        structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget, health: 100 });
 
         createMeshForPlant(type, plant.color, plant.geometry, plant.modelPath, function(mesh) {
             mesh.position.x = emptyTile.col - 9.5; 
@@ -934,32 +1003,51 @@ function runTick() {
         });
     }
 
-    // --- HAM ÜRETİM (sabit kaynaklar sabit faktörle, güneş/rüzgar gün boyu değişen faktörle) ---
-    function rawZone(zoneStr) {
-        let z = state.installed[zoneStr];
-        return {
-            coal: z.coal * CAPACITY_FACTOR.coal, gas: z.gas * CAPACITY_FACTOR.gas,
-            geo: z.geo * CAPACITY_FACTOR.geo, hydro: z.hydro * CAPACITY_FACTOR.hydro,
-            solar: z.solar * state.solarFactor, wind: z.wind * state.windFactor
-        };
-    }
-    let cityR = rawZone("city"); let ruralR = rawZone("rural");
+    // --- SANTRAL SAĞLIĞI: tablo değerleri yüzde/gün (örn. 0.10 = %10/gün), saatlik kayıp = (yüzde*100)/24 puan ---
+    structures.forEach(s => {
+        let dailyDecayFraction = HEALTH_DECAY_PER_DAY[s.type];
+        if (!dailyDecayFraction) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
+        if (s.health === undefined || s.health === null) s.health = 100;
+        if (s.health > 0) s.health = Math.max(0, s.health - (dailyDecayFraction * 100 / 24));
+    });
 
-    let coalProd = cityR.coal + ruralR.coal * 0.9;
-    let gasProd = cityR.gas + ruralR.gas * 0.9;
-    let geoProd = cityR.geo + ruralR.geo * 0.9;
-    let hydroProd = cityR.hydro + ruralR.hydro * 0.9;
-    let solarProd = cityR.solar + ruralR.solar * 0.9;
-    let windProd = cityR.wind + ruralR.wind * 0.9;
+    // --- HAM ÜRETİM: her tesisin GÜNCEL SAĞLIĞIYLA orantılı kapasitesi üzerinden hesaplanır ---
+    function aggregateByZoneType() {
+        let agg = {
+            city: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, batteryCapacity: 0 },
+            rural: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, batteryCapacity: 0 },
+            forest: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, batteryCapacity: 0 }
+        };
+        structures.forEach(s => {
+            if (!agg[s.zone]) return;
+            let health = (s.health === undefined || s.health === null) ? 100 : s.health;
+            if (s.type === 'battery') {
+                if (health >= 10) agg[s.zone].batteryCapacity += s.capacity * (health / 100);
+                return;
+            }
+            if (!(s.type in agg[s.zone])) return; // ev/ağaç vb. üretime dahil değil
+            if (health < 10) return; // sağlık %10 altına düşen tesis kapanır, üretim 0
+            agg[s.zone][s.type] += s.capacity * (health / 100);
+        });
+        return agg;
+    }
+    let agg = aggregateByZoneType();
+
+    let coalProd = agg.city.coal * CAPACITY_FACTOR.coal + agg.rural.coal * CAPACITY_FACTOR.coal * 0.9;
+    let gasProd = agg.city.gas * CAPACITY_FACTOR.gas + agg.rural.gas * CAPACITY_FACTOR.gas * 0.9;
+    let geoProd = agg.city.geo * CAPACITY_FACTOR.geo + agg.rural.geo * CAPACITY_FACTOR.geo * 0.9;
+    let hydroProd = agg.city.hydro * CAPACITY_FACTOR.hydro + agg.rural.hydro * CAPACITY_FACTOR.hydro * 0.9;
+    let solarProd = agg.city.solar * state.solarFactor + agg.rural.solar * state.solarFactor * 0.9;
+    let windProd = agg.city.wind * state.windFactor + agg.rural.wind * state.windFactor * 0.9;
 
     let totalRawProduction = coalProd + gasProd + geoProd + hydroProd + solarProd + windProd;
     let currentDemandPerPerson = getCurrentDemandPerPerson();
     let currentDemand = state.population * currentDemandPerPerson; // MWh
 
-    // --- DEPOLAMA: fazla üretimin bir kısmını depola, açık verince depodan kullan ---
-    let totalMaxStorage = 0;
-    ['city','rural','forest'].forEach(z => { totalMaxStorage += state.installed[z].solarStorage + state.installed[z].windStorage; });
+    // --- DEPOLAMA: fazla üretimin bir kısmını depola, açık verince depodan kullan (kapasite santral sağlığına göre değişir) ---
+    let totalMaxStorage = agg.city.batteryCapacity + agg.rural.batteryCapacity + agg.forest.batteryCapacity;
     state.storageCharge = Math.min(state.storageCharge, totalMaxStorage);
+
 
     let netBeforeStorage = totalRawProduction - currentDemand;
     let storedThisTick = 0, dischargedThisTick = 0;
@@ -1060,6 +1148,7 @@ function runTick() {
         let houseCount = state.plantCounts.house || 0;
         if (houseCount > 0) instHtml += `<div class="income-row"><span>🏠 Ev:</span> <span>${houseCount} adet, ${getCapacity('house')} Blok</span></div>`;
         document.getElementById('installedDetails').innerHTML = instHtml || "Henüz tesis kurulmadı.";
+        updateMaintenancePanel();
 
         // --- DEPOLAMA DURUM SATIRI ---
         let storageStatusDiv = document.getElementById('storage-status');
