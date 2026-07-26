@@ -83,16 +83,18 @@ function updateMaintenancePanel() {
             let fixCost = Math.round(s.capacity * (plant.costPerMw / 10));
             btnHtml = `<button class="build-btn" style="background:#e67e22; color:#fff;" onclick="fixBreakdown(${s.row},${s.col})">⚙️ Arızayı Gider (${fixCost.toLocaleString()} 💰)</button>`;
         } else {
-            let mult = getMaintenanceMultiplier(health);
-            color = health < 10 ? '#7f8c8d' : (health > 70 ? '#27ae60' : (health >= 50 ? '#f39c12' : '#e74c3c'));
-            statusText = health < 10 ? 'KAPANDI ⛔' : `%${health.toFixed(0)}`;
-            if (mult === null) {
-                btnHtml = `<button class="build-btn" style="background:#7f8c8d; color:#fff; opacity:0.7;" disabled>Kapandı - Sökülmeli</button>`;
-            } else {
-                let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult * MAINTENANCE_COST_MULTIPLIER);
-                btnHtml = `<button class="build-btn" style="background:#16a085; color:#fff;" onclick="repairPlant(${s.row},${s.col})">🔧 Bakım Yap (${cost.toLocaleString()} 💰)</button>`;
-            }
-        }
+    let mult = getMaintenanceMultiplier(health);
+    color = health < 10 ? '#7f8c8d' : (health > 70 ? '#27ae60' : (health >= 50 ? '#f39c12' : '#e74c3c'));
+    statusText = health < 10 ? 'KAPANDI ⛔' : `%${health.toFixed(0)}`;
+    if (health >= 100) {
+        btnHtml = `<span style="color:#27ae60; font-weight:bold;">✅ Sağlıklı</span>`;
+    } else if (mult === null) {
+        btnHtml = `<button class="build-btn" style="background:#7f8c8d; color:#fff; opacity:0.7;" disabled>Kapandı - Sökülmeli</button>`;
+    } else {
+        let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult * MAINTENANCE_COST_MULTIPLIER);
+        btnHtml = `<button class="build-btn" style="background:#16a085; color:#fff;" onclick="repairPlant(${s.row},${s.col})">🔧 Bakım Yap (${cost.toLocaleString()} 💰)</button>`;
+    }
+}
 
         html += `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #ecf0f1; flex-wrap:wrap;">
             <div style="min-width:140px;">
