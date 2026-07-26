@@ -11,7 +11,7 @@ let state = {
         forest: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, solarStorage:0, windStorage:0, tree:0, house:0 }
     },
     plantCounts: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, battery:0, tree:0, house:20 },
-    storageCharge: 0, // Depoda o an biriken toplam enerji (MWh)
+    solarStorageCharge: 0, windStorageCharge: 0, // Güneşe/rüzgara bağlı depoların o anki dolu miktarı (MWh) - birbirinden bağımsız
     solarFactor: 0.0, windFactor: 0.33 // Güneş/rüzgar için gün boyu değişen anlık kapasite faktörü
 };
 
@@ -46,10 +46,17 @@ function getCurrentPrice() {
     return 4.0;                                            // Gece (00:00-07:00)
 }
 
-// Her 24 saatlik döngüde (1 gün) santralin kaybettiği sağlık yüzdesi
-const HEALTH_DECAY_PER_DAY = { hydro: 0.02, solar: 0.04, wind: 0.06, geo: 0.07, coal: 0.10, gas: 0.12, battery: 0.20 };
-// MW başına bakım maliyeti (💰)
+// Her 1200 döngüde (yaklaşık bir gerçek gün) santralin kaybettiği sağlık puanı
+const HEALTH_DECAY_PER_1200 = { hydro: 0.02, solar: 0.04, wind: 0.06, geo: 0.07, coal: 0.10, gas: 0.12, battery: 0.20 };
+// MW başına bakım maliyeti (💰) - baz değerler
 const MAINTENANCE_COST_PER_MW = { hydro: 10, solar: 20, wind: 30, geo: 40, battery: 50, coal: 60, gas: 70 };
+const MAINTENANCE_COST_MULTIPLIER = 5; // Bakım maliyetleri genel olarak 5 kat artırıldı
+// Arıza olasılığı: ortalama her 1200 döngüde bir santral arıza verir
+const BREAKDOWN_CHANCE_PER_TICK = 1 / 1200;
+// Baz yük kısıtı: kurulu gücün en az %40'ı bu tiplerden olmak zorunda
+const BASELOAD_TYPES = ['coal', 'gas', 'geo'];
+const BASELOAD_MIN_RATIO = 0.40;
+
 function getMaintenanceMultiplier(health) {
     if (health > 70) return 1;
     if (health >= 50) return 2;
@@ -60,27 +67,37 @@ function getMaintenanceMultiplier(health) {
 function updateMaintenancePanel() {
     let panel = document.getElementById('maintenanceDetails');
     if (!panel) return;
-    let list = structures.filter(s => HEALTH_DECAY_PER_DAY[s.type] !== undefined).slice().sort((a, b) => a.health - b.health);
+    let list = structures.filter(s => HEALTH_DECAY_PER_1200[s.type] !== undefined).slice().sort((a, b) => a.health - b.health);
     if (list.length === 0) { panel.innerHTML = "Henüz bakım gerektiren bir tesis yok."; return; }
 
     let html = "";
     list.forEach(s => {
         let plant = plants[s.type];
         let health = (s.health === undefined || s.health === null) ? 100 : s.health;
-        let mult = getMaintenanceMultiplier(health);
-        let color = health < 10 ? '#7f8c8d' : (health > 70 ? '#27ae60' : (health >= 50 ? '#f39c12' : '#e74c3c'));
-        let statusText = health < 10 ? 'KAPANDI ⛔' : `%${health.toFixed(0)}`;
-        let btnHtml;
-        if (mult === null) {
-            btnHtml = `<button class="build-btn" style="background:#7f8c8d; color:#fff; opacity:0.7;" disabled>Kapandı - Sökülmeli</button>`;
+        let zoneName = s.zone === 'city' ? 'Şehir' : s.zone === 'rural' ? 'Kırsal' : 'Orman';
+        let btnHtml, statusText, color;
+
+        if (s.broken) {
+            color = '#c0392b';
+            statusText = '⚠️ ARIZALI (Üretim Durdu)';
+            let fixCost = Math.round(s.capacity * (plant.costPerMw / 10));
+            btnHtml = `<button class="build-btn" style="background:#e67e22; color:#fff;" onclick="fixBreakdown(${s.row},${s.col})">⚙️ Arızayı Gider (${fixCost.toLocaleString()} 💰)</button>`;
         } else {
-            let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult);
-            btnHtml = `<button class="build-btn" style="background:#16a085; color:#fff;" onclick="repairPlant(${s.row},${s.col})">🔧 Bakım Yap (${cost.toLocaleString()} 💰)</button>`;
+            let mult = getMaintenanceMultiplier(health);
+            color = health < 10 ? '#7f8c8d' : (health > 70 ? '#27ae60' : (health >= 50 ? '#f39c12' : '#e74c3c'));
+            statusText = health < 10 ? 'KAPANDI ⛔' : `%${health.toFixed(0)}`;
+            if (mult === null) {
+                btnHtml = `<button class="build-btn" style="background:#7f8c8d; color:#fff; opacity:0.7;" disabled>Kapandı - Sökülmeli</button>`;
+            } else {
+                let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult * MAINTENANCE_COST_MULTIPLIER);
+                btnHtml = `<button class="build-btn" style="background:#16a085; color:#fff;" onclick="repairPlant(${s.row},${s.col})">🔧 Bakım Yap (${cost.toLocaleString()} 💰)</button>`;
+            }
         }
+
         html += `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #ecf0f1; flex-wrap:wrap;">
             <div style="min-width:140px;">
-                <div><b>${plant.icon} ${plant.name}</b> — ${s.capacity} MW (${s.zone === 'city' ? 'Şehir' : s.zone === 'rural' ? 'Kırsal' : 'Orman'})</div>
-                <div style="font-size:12px; color:${color}; font-weight:bold;">Sağlık: ${statusText}</div>
+                <div><b>${plant.icon} ${plant.name}</b> — ${s.capacity} MW (${zoneName})</div>
+                <div style="font-size:12px; color:${color}; font-weight:bold;">${s.broken ? statusText : 'Sağlık: ' + statusText}</div>
             </div>
             ${btnHtml}
         </div>`;
@@ -91,21 +108,43 @@ function updateMaintenancePanel() {
 window.repairPlant = function (row, col) {
     let s = structures.find(st => st.row === row && st.col === col);
     if (!s) return;
+    if (s.broken) { showAlert("Bu tesis arızalı, önce arızayı gidermen gerekiyor."); return; }
     let health = (s.health === undefined || s.health === null) ? 100 : s.health;
     let mult = getMaintenanceMultiplier(health);
     let plant = plants[s.type];
 
     if (mult === null) { SoundEngine.error(); showAlert(`Bu tesisin sağlığı %10'un altına düştü, artık bakım yapılamaz. Söküp yeniden kurman gerekiyor.`); return; }
 
-    let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult);
+    let cost = Math.round(s.capacity * MAINTENANCE_COST_PER_MW[s.type] * mult * MAINTENANCE_COST_MULTIPLIER);
     showConfirm(
-        `🔧 ${plant.icon} ${plant.name} BAKIMI\n\nMevcut Sağlık: %${health.toFixed(0)}\nMaliyet Çarpanı: ${mult}x\nToplam Maliyet: ${cost.toLocaleString()} 💰\n\nBakım yapılıp sağlık %100'e çıkarılsın mı?`,
+        `🔧 ${plant.icon} ${plant.name} BAKIMI\n\nMevcut Sağlık: %${health.toFixed(0)}\nMaliyet Çarpanı: ${mult}x (x${MAINTENANCE_COST_MULTIPLIER})\nToplam Maliyet: ${cost.toLocaleString()} 💰\n\nBakım yapılıp sağlık %100'e çıkarılsın mı?`,
         function () {
             if (state.budget < cost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
             state.budget -= cost;
             s.health = 100;
             SoundEngine.upgrade();
             showAlert(`✅ ${plant.icon} ${plant.name} bakımı tamamlandı! Sağlık %100'e çıktı.`);
+            updateMaintenancePanel();
+            updateUI();
+            saveGame();
+        }
+    );
+};
+
+window.fixBreakdown = function (row, col) {
+    let s = structures.find(st => st.row === row && st.col === col);
+    if (!s || !s.broken) return;
+    let plant = plants[s.type];
+    let cost = Math.round(s.capacity * (plant.costPerMw / 10));
+
+    showConfirm(
+        `⚙️ ${plant.icon} ${plant.name} ARIZA GİDERME\n\nTesis arızalı, üretim durmuş durumda.\nMaliyet: ${cost.toLocaleString()} 💰\n\nArıza giderilsin mi?`,
+        function () {
+            if (state.budget < cost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
+            state.budget -= cost;
+            s.broken = false;
+            SoundEngine.upgrade();
+            showAlert(`✅ ${plant.icon} ${plant.name} arızası giderildi, üretime devam ediyor.`);
             updateMaintenancePanel();
             updateUI();
             saveGame();
@@ -442,7 +481,7 @@ function loadGame() {
     dailyGoals = data.dailyGoals || dailyGoals;
     generalGoal = data.generalGoal || generalGoal;
     structures = data.structures || [];
-    structures.forEach(s => { if (s.health === undefined || s.health === null) s.health = 100; });
+    structures.forEach(s => { if (s.health === undefined || s.health === null) s.health = 100; if (s.broken === undefined) s.broken = false; });
 
     // Satın alınmış ek arazileri (expansions) aynı algoritmayla tekrar çiz
     ['city', 'rural', 'forest'].forEach(type => {
@@ -517,7 +556,7 @@ function generateInitialCity(skipRecord) {
         
         worldGroup.add(houseGroup);
         meshes.push(houseGroup);
-        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '', health: 100 });
+        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '', health: 100, broken: false });
     }
     if (!skipRecord) state.land.cityUsed += 100; // 20 ev x 5 ha
 }
@@ -774,6 +813,25 @@ function buildPlant(type) {
     let totalCost = capacity * plant.costPerMw;
     if (state.budget < totalCost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
 
+    // --- BAZ YÜK KISITI: kurulu gücün en az %40'ı Kömür/Doğalgaz/Jeotermal olmak zorunda ---
+    const GEN_TYPES = ['coal', 'gas', 'geo', 'hydro', 'solar', 'wind'];
+    if (GEN_TYPES.includes(type)) {
+        let totalInstalled = 0, totalBaseload = 0;
+        GEN_TYPES.forEach(t => {
+            let sum = getCapacity(t);
+            totalInstalled += sum;
+            if (BASELOAD_TYPES.includes(t)) totalBaseload += sum;
+        });
+        let newTotal = totalInstalled + capacity;
+        let newBaseload = totalBaseload + (BASELOAD_TYPES.includes(type) ? capacity : 0);
+        let ratio = newTotal > 0 ? newBaseload / newTotal : 1;
+        if (ratio < BASELOAD_MIN_RATIO - 0.0001) {
+            SoundEngine.error();
+            showAlert(`⚠️ BAZ YÜK KISITI\n\nKurulu gücün en az %40'ı Kömür, Doğalgaz veya Jeotermal olmak zorunda.\n\nBu tesisi kurarsan baz yük oranı %${(ratio * 100).toFixed(1)}'e düşer. İzin verilmiyor - önce baz yük kapasitesi ekle.`);
+            return;
+        }
+    }
+
     if (type === 'battery') {
         showPrompt("Güneş için 'G', Rüzgar için 'R' yaz:", '', function (answer) {
             if (!answer) return;
@@ -824,7 +882,7 @@ function confirmAndBuild(type, zone, capacity, plant, emptyTile, landToAdd, tota
 
         emptyTile.isOccupied = true; // Zemin karesini dolu işaretle
         state.plantCounts[type] = (state.plantCounts[type] || 0) + 1;
-        structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget, health: 100 });
+        structures.push({ type: type, zone: zone, capacity: capacity, row: emptyTile.row, col: emptyTile.col, batteryTarget: batteryTarget, health: 100, broken: false });
 
         createMeshForPlant(type, plant.color, plant.geometry, plant.modelPath, function(mesh) {
             mesh.position.x = emptyTile.col - 9.5; 
@@ -863,6 +921,24 @@ window.triggerUpgrade = function() {
         if (d.zone === "city" && (state.land.cityUsed + extraLand > state.land.cityMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
         if (d.zone === "rural" && (state.land.ruralUsed + extraLand > state.land.ruralMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
         if (d.zone === "forest" && (state.land.forestUsed + extraLand > state.land.forestMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+
+        const GEN_TYPES_UP = ['coal', 'gas', 'geo', 'hydro', 'solar', 'wind'];
+        if (GEN_TYPES_UP.includes(d.type)) {
+            let totalInstalled = 0, totalBaseload = 0;
+            GEN_TYPES_UP.forEach(t => {
+                let sum = getCapacity(t);
+                totalInstalled += sum;
+                if (BASELOAD_TYPES.includes(t)) totalBaseload += sum;
+            });
+            let newTotal = totalInstalled + extraCapacity;
+            let newBaseload = totalBaseload + (BASELOAD_TYPES.includes(d.type) ? extraCapacity : 0);
+            let ratio = newTotal > 0 ? newBaseload / newTotal : 1;
+            if (ratio < BASELOAD_MIN_RATIO - 0.0001) {
+                SoundEngine.error();
+                showAlert(`⚠️ BAZ YÜK KISITI\n\nKurulu gücün en az %40'ı Kömür, Doğalgaz veya Jeotermal olmak zorunda.\n\nBu yükseltmeyi yaparsan baz yük oranı %${(ratio * 100).toFixed(1)}'e düşer. İzin verilmiyor.`);
+                return;
+            }
+        }
         
         SoundEngine.upgrade();
         state.budget -= extraCost;
@@ -1003,30 +1079,46 @@ function runTick() {
         });
     }
 
-    // --- SANTRAL SAĞLIĞI: her saatte günlük kayıp/24 kadar sağlık düşer ---
+    // --- SANTRAL SAĞLIĞI: tablo değerleri 1200 döngü başına düşen puan (yaklaşık gerçek bir gün), yavaş kademeli aşınma ---
     structures.forEach(s => {
-        let dailyDecay = HEALTH_DECAY_PER_DAY[s.type];
-        if (!dailyDecay) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
+        let decayPer1200 = HEALTH_DECAY_PER_1200[s.type];
+        if (!decayPer1200) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
         if (s.health === undefined || s.health === null) s.health = 100;
-        if (s.health > 0) s.health = Math.max(0, s.health - (dailyDecay / 24));
+        if (s.health > 0) s.health = Math.max(0, s.health - (decayPer1200 / 1200));
     });
 
-    // --- HAM ÜRETİM: her tesisin GÜNCEL SAĞLIĞIYLA orantılı kapasitesi üzerinden hesaplanır ---
+    // --- ARIZA: ortalama her 1200 döngüde rastgele bir santral arıza verir, üretimi tamamen durur ---
+    if (Math.random() < BREAKDOWN_CHANCE_PER_TICK) {
+        let eligible = structures.filter(s => HEALTH_DECAY_PER_1200[s.type] !== undefined && !s.broken && s.health >= 10);
+        if (eligible.length > 0) {
+            let picked = eligible[Math.floor(Math.random() * eligible.length)];
+            picked.broken = true;
+            if (!simulatingOffline) {
+                SoundEngine.error();
+                let pName = plants[picked.type].name, pIcon = plants[picked.type].icon;
+                showAlert(`⚠️ ARIZA!\n\n${pIcon} ${pName} (${picked.capacity} MW, ${picked.zone === 'city' ? 'Şehir' : picked.zone === 'rural' ? 'Kırsal' : 'Orman'}) arıza verdi ve üretimi durdu.\n\nBakım sekmesinden arızayı giderebilirsin.`);
+            }
+        }
+    }
+
+    // --- HAM ÜRETİM: her tesisin GÜNCEL SAĞLIĞI (ve arıza durumu) ile orantılı kapasitesi üzerinden hesaplanır ---
     function aggregateByZoneType() {
         let agg = {
-            city: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, batteryCapacity: 0 },
-            rural: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, batteryCapacity: 0 },
-            forest: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, batteryCapacity: 0 }
+            city: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, solarBatteryCap: 0, windBatteryCap: 0 },
+            rural: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, solarBatteryCap: 0, windBatteryCap: 0 },
+            forest: { coal: 0, gas: 0, geo: 0, hydro: 0, solar: 0, wind: 0, solarBatteryCap: 0, windBatteryCap: 0 }
         };
         structures.forEach(s => {
             if (!agg[s.zone]) return;
+            if (s.broken) return; // arızalı tesis hiç üretmez / depolamaz
             let health = (s.health === undefined || s.health === null) ? 100 : s.health;
+            if (health < 10) return; // sağlık %10 altına düşen tesis kapanır
             if (s.type === 'battery') {
-                if (health >= 10) agg[s.zone].batteryCapacity += s.capacity * (health / 100);
+                if (s.batteryTarget === 'wind') agg[s.zone].windBatteryCap += s.capacity * (health / 100);
+                else agg[s.zone].solarBatteryCap += s.capacity * (health / 100);
                 return;
             }
             if (!(s.type in agg[s.zone])) return; // ev/ağaç vb. üretime dahil değil
-            if (health < 10) return; // sağlık %10 altına düşen tesis kapanır, üretim 0
             agg[s.zone][s.type] += s.capacity * (health / 100);
         });
         return agg;
@@ -1044,35 +1136,61 @@ function runTick() {
     let currentDemandPerPerson = getCurrentDemandPerPerson();
     let currentDemand = state.population * currentDemandPerPerson; // MWh
 
-    // --- DEPOLAMA: fazla üretimin bir kısmını depola, açık verince depodan kullan (kapasite santral sağlığına göre değişir) ---
-    let totalMaxStorage = agg.city.batteryCapacity + agg.rural.batteryCapacity + agg.forest.batteryCapacity;
-    state.storageCharge = Math.min(state.storageCharge, totalMaxStorage);
+    // --- DEPOLAMA: SADECE bağlı olduğu kaynağın (güneş/rüzgar) o anki fazla üretimi depolanabilir ---
+    // Önce baz/sabit kaynaklar talebi karşılar; güneş+rüzgarın talebi aştığı kısım "yenilenebilir fazlası" sayılır,
+    // bu fazla da güneş/rüzgarın o anki üretimindeki payına göre ikiye bölünür.
+    let totalSolarBatteryCap = agg.city.solarBatteryCap + agg.rural.solarBatteryCap + agg.forest.solarBatteryCap;
+    let totalWindBatteryCap = agg.city.windBatteryCap + agg.rural.windBatteryCap + agg.forest.windBatteryCap;
+    let totalMaxStorage = totalSolarBatteryCap + totalWindBatteryCap;
 
+    if (state.solarStorageCharge === undefined) state.solarStorageCharge = 0;
+    if (state.windStorageCharge === undefined) state.windStorageCharge = 0;
+    state.solarStorageCharge = Math.min(state.solarStorageCharge, totalSolarBatteryCap);
+    state.windStorageCharge = Math.min(state.windStorageCharge, totalWindBatteryCap);
 
-    let netBeforeStorage = totalRawProduction - currentDemand;
-    let storedThisTick = 0, dischargedThisTick = 0;
-    let totalNetProduction = totalRawProduction;
+    let otherProd = coalProd + gasProd + geoProd + hydroProd;
+    let renewableProd = solarProd + windProd;
+    let neededFromRenewable = Math.max(0, currentDemand - otherProd);
+    let renewableSurplus = Math.max(0, renewableProd - neededFromRenewable);
+
+    let solarSurplus = 0, windSurplus = 0;
+    if (renewableSurplus > 0 && renewableProd > 0) {
+        solarSurplus = renewableSurplus * (solarProd / renewableProd);
+        windSurplus = renewableSurplus * (windProd / renewableProd);
+    }
+
+    let solarStored = Math.max(0, Math.min(solarSurplus, totalSolarBatteryCap - state.solarStorageCharge));
+    let windStored = Math.max(0, Math.min(windSurplus, totalWindBatteryCap - state.windStorageCharge));
+    state.solarStorageCharge += solarStored;
+    state.windStorageCharge += windStored;
+    let storedThisTick = solarStored + windStored;
+
+    let totalNetProduction = totalRawProduction - storedThisTick;
+    let dischargedThisTick = 0;
     let storageMsg = null;
 
-    if (netBeforeStorage > 0) {
-        let solarWindRaw = solarProd + windProd;
-        let storableSurplus = Math.min(netBeforeStorage, solarWindRaw) * 0.5; // fazlanın yarısı depolanır
-        let roomLeft = totalMaxStorage - state.storageCharge;
-        storedThisTick = Math.max(0, Math.min(storableSurplus, roomLeft));
-        if (storedThisTick > 0.01) {
-            state.storageCharge += storedThisTick;
-            totalNetProduction -= storedThisTick;
-            storageMsg = { type: 'charge', text: `🔋 Depolama yapılıyor: +${storedThisTick.toFixed(1)} MWh depoya aktarılıyor (${state.storageCharge.toFixed(1)}/${totalMaxStorage.toFixed(1)} MWh)` };
-        }
-    } else if (netBeforeStorage < 0) {
-        let deficit = -netBeforeStorage;
-        dischargedThisTick = Math.max(0, Math.min(deficit, state.storageCharge));
+    if (storedThisTick > 0.01) {
+        let parts = [];
+        if (solarStored > 0.01) parts.push(`☀️ +${solarStored.toFixed(1)} MWh (${state.solarStorageCharge.toFixed(1)}/${totalSolarBatteryCap.toFixed(1)})`);
+        if (windStored > 0.01) parts.push(`🌬️ +${windStored.toFixed(1)} MWh (${state.windStorageCharge.toFixed(1)}/${totalWindBatteryCap.toFixed(1)})`);
+        storageMsg = { type: 'charge', text: `🔋 Depolama yapılıyor: ${parts.join(' | ')}` };
+    }
+
+    let netBeforeDischarge = totalNetProduction - currentDemand;
+    if (netBeforeDischarge < 0) {
+        let deficit = -netBeforeDischarge;
+        let availableCombined = state.solarStorageCharge + state.windStorageCharge;
+        dischargedThisTick = Math.max(0, Math.min(deficit, availableCombined));
         if (dischargedThisTick > 0.01) {
-            state.storageCharge -= dischargedThisTick;
+            let fromSolar = availableCombined > 0 ? dischargedThisTick * (state.solarStorageCharge / availableCombined) : 0;
+            let fromWind = dischargedThisTick - fromSolar;
+            state.solarStorageCharge = Math.max(0, state.solarStorageCharge - fromSolar);
+            state.windStorageCharge = Math.max(0, state.windStorageCharge - fromWind);
             totalNetProduction += dischargedThisTick;
-            storageMsg = { type: 'discharge', text: `🔋 Depolamadan kullanılıyor: -${dischargedThisTick.toFixed(1)} MWh depodan çekildi (Kalan: ${state.storageCharge.toFixed(1)}/${totalMaxStorage.toFixed(1)} MWh)` };
+            storageMsg = { type: 'discharge', text: `🔋 Depolamadan kullanılıyor: -${dischargedThisTick.toFixed(1)} MWh (Kalan: ${(state.solarStorageCharge + state.windStorageCharge).toFixed(1)}/${totalMaxStorage.toFixed(1)} MWh)` };
         }
     }
+
 
     let soldEnergy = Math.min(totalNetProduction, currentDemand);
     let wastedEnergy = Math.max(0, totalNetProduction - currentDemand);
@@ -1158,7 +1276,7 @@ function runTick() {
                 storageStatusDiv.innerHTML = storageMsg.text;
                 storageStatusDiv.style.color = storageMsg.type === 'charge' ? '#8e44ad' : '#d35400';
             } else {
-                storageStatusDiv.innerHTML = `🔋 Depo Durumu: ${state.storageCharge.toFixed(1)} / ${totalMaxStorage.toFixed(1)} MWh (beklemede)`;
+                storageStatusDiv.innerHTML = `🔋 Depo Durumu: ${(state.solarStorageCharge + state.windStorageCharge).toFixed(1)} / ${totalMaxStorage.toFixed(1)} MWh (beklemede)`;
                 storageStatusDiv.style.color = '#7f8c8d';
             }
         } else {
