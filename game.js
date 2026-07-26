@@ -1230,13 +1230,13 @@ function runTick() {
     let displayEms = Math.max(0, state.emissions); 
     let carbonTax = displayEms > 30 ? (displayEms - 30) * 2.5 : 0; 
     
-    // YENİ: Fazla üretim cezası 100 olarak güncellendi
-    const OVERPRODUCTION_PENALTY_PER_MWH = 100.0; 
+    // YENİ: Fazla üretim cezası 10 olarak güncellendi
+    const OVERPRODUCTION_PENALTY_PER_MWH = 10.0; 
     let overproductionCost = wastedEnergy * OVERPRODUCTION_PENALTY_PER_MWH;
 
     // YENİ: Eksik üretim (şebekeye verilemeyen) hesaplaması ve cezası
     let deficitEnergy = Math.max(0, currentDemand - totalNetProduction);
-    const UNDERPRODUCTION_PENALTY_PER_MWH = 100.0; 
+    const UNDERPRODUCTION_PENALTY_PER_MWH = 10.0; 
     let underproductionCost = deficitEnergy * UNDERPRODUCTION_PENALTY_PER_MWH;
 
     // BÜTÇE GÜNCELLEMESİ (Eksik üretim cezası eklendi)
