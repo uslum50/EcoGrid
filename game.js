@@ -86,7 +86,7 @@ function updateMaintenancePanel() {
     let mult = getMaintenanceMultiplier(health);
     color = health < 10 ? '#7f8c8d' : (health > 70 ? '#27ae60' : (health >= 50 ? '#f39c12' : '#e74c3c'));
     statusText = health < 10 ? 'KAPANDI ⛔' : `%${health.toFixed(0)}`;
-    if (health >= 100) {
+    if (Math.round(health) >= 100) {
         btnHtml = `<span style="color:#27ae60; font-weight:bold;">✅ Sağlıklı</span>`;
     } else if (mult === null) {
         btnHtml = `<button class="build-btn" style="background:#7f8c8d; color:#fff; opacity:0.7;" disabled>Kapandı - Sökülmeli</button>`;
