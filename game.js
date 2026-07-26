@@ -1071,7 +1071,7 @@ function checkGoals() {
             showAlert(`🏆 GENEL GÖREV BAŞARILI: ${generalGoal.desc}! \nKasa: +${generalGoal.reward.toLocaleString()} 💰`);
         }
         let newTarget = generalGoal.target + 1000;
-        generalGoal = { type: 'pop', target: newTarget, current: state.population, reward: newTarget * 30, desc: `Şehir nüfusunu ${newTarget}'e ulaştır` };
+        generalGoal = { type: 'pop', target: newTarget, current: state.population, reward: newTarget * 5, desc: `Şehir nüfusunu ${newTarget}'e ulaştır` };
     }
     document.getElementById('generalGoalText').innerHTML = `🌟 <b>Genel Görev:</b> ${generalGoal.desc} <br> Durum: ${generalGoal.current} / ${generalGoal.target} Kişi <br><span style="color:#27ae60;">Ödül: ${generalGoal.reward.toLocaleString()} 💰</span>`;
 }
