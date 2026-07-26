@@ -162,13 +162,13 @@ let dailyGoals = [];
 let generalGoal = { type: 'pop', target: 2000, current: 1000, reward: 50000, desc: "Şehir nüfusunu 2000'e ulaştır" };
 
 const plants = {
-    gas:     { costPerMw: 1500, emissionPerMw: 0.8, opexPerMw: 2.0, landPerMw: 0.1, allowedInCity: false, name: "Doğalgaz", icon: "🔥", color: 0xe67e22, geometry: 'cylinder', modelPath: 'assets/models/power/gas.glb' },
-    coal:    { costPerMw: 3000, emissionPerMw: 1.5, opexPerMw: 1.0, landPerMw: 0.2, allowedInCity: false, name: "Kömür", icon: "🏭", color: 0x34495e, geometry: 'box_tall', modelPath: 'assets/models/power/coal.glb' },
-    geo:     { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.25,landPerMw: 0.5, allowedInCity: false, name: "Jeotermal", icon: "🌋", color: 0xe74c3c, geometry: 'cylinder_low', modelPath: 'assets/models/power/geo.glb' },
-    hydro:   { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.1, landPerMw: 20.0,allowedInCity: false, name: "Hidrolik", icon: "🌊", color: 0x0984e3, geometry: 'box_wide', modelPath: 'assets/models/power/hydro.glb' },
-    wind:    { costPerMw: 1800, emissionPerMw: 0,   opexPerMw: 0.3, landPerMw: 10.0,allowedInCity: false, name: "Rüzgar", icon: "🌬️", color: 0xffffff, geometry: 'turbine', modelPath: 'assets/models/power/wind.glb' },
-    solar:   { costPerMw: 800,  emissionPerMw: 0,   opexPerMw: 0.1, landPerMw: 3.0, allowedInCity: true,  name: "Güneş", icon: "☀️", color: 0x111111, geometry: 'panel', modelPath: 'assets/models/power/solar.glb' },
-    battery: { costPerMw: 1500, emissionPerMw: 0,   opexPerMw: 0.1, landPerMw: 0.1, allowedInCity: true,  name: "Depolama", icon: "🔋", color: 0x8e44ad, geometry: 'box', modelPath: 'assets/models/power/battery.glb' },
+    gas:     { costPerMw: 1500, emissionPerMw: 0.8, opexPerMw: 3.0, landPerMw: 0.1, allowedInCity: false, name: "Doğalgaz", icon: "🔥", color: 0xe67e22, geometry: 'cylinder', modelPath: 'assets/models/power/gas.glb' },
+    coal:    { costPerMw: 3000, emissionPerMw: 1.5, opexPerMw: 1.5, landPerMw: 0.2, allowedInCity: false, name: "Kömür", icon: "🏭", color: 0x34495e, geometry: 'box_tall', modelPath: 'assets/models/power/coal.glb' },
+    geo:     { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.4, landPerMw: 0.5, allowedInCity: false, name: "Jeotermal", icon: "🌋", color: 0xe74c3c, geometry: 'cylinder_low', modelPath: 'assets/models/power/geo.glb' },
+    hydro:   { costPerMw: 5000, emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 20.0,allowedInCity: false, name: "Hidrolik", icon: "🌊", color: 0x0984e3, geometry: 'box_wide', modelPath: 'assets/models/power/hydro.glb' },
+    wind:    { costPerMw: 1800, emissionPerMw: 0,   opexPerMw: 0.45,landPerMw: 10.0,allowedInCity: false, name: "Rüzgar", icon: "🌬️", color: 0xffffff, geometry: 'turbine', modelPath: 'assets/models/power/wind.glb' },
+    solar:   { costPerMw: 800,  emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 3.0, allowedInCity: true,  name: "Güneş", icon: "☀️", color: 0x111111, geometry: 'panel', modelPath: 'assets/models/power/solar.glb' },
+    battery: { costPerMw: 1500, emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 0.1, allowedInCity: true,  name: "Depolama", icon: "🔋", color: 0x8e44ad, geometry: 'box', modelPath: 'assets/models/power/battery.glb' },
     tree:    { costPerMw: 100, emissionPerMw:-0.08, opexPerMw: 0.05,landPerMw: 1.0, allowedInCity: false, name: "Orman", icon: "🌳", color: 0x27ae60, geometry: 'cone', modelPath: 'assets/models/power/tree.glb' },
     house:   { costPerMw: 2000, emissionPerMw: 0.1, opexPerMw: 0.1, landPerMw: 5.0, allowedInCity: true,  name: "Yerleşim", icon: "🏠", color: 0xecf0f1, geometry: 'house', modelPath: 'assets/models/buildings/house.glb' }
 };
@@ -530,6 +530,16 @@ function loadGame() {
     }
     return true;
 }
+
+window.resetGame = function () {
+    showConfirm(
+        "⚠️ OYUNU SIFIRLA\n\nTüm ilerlemen (kasa, kurulu santraller, nüfus, arazi, görevler) silinecek ve oyun sıfırdan başlayacak.\n\nBu işlem GERİ ALINAMAZ. Emin misin?",
+        function () {
+            try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+            location.reload();
+        }
+    );
+};
 
 // Kayıtlı oyun varsa yükle, yoksa sıfırdan başla
 if (!loadGame()) {
@@ -1079,12 +1089,14 @@ function runTick() {
         });
     }
 
-    // --- SANTRAL SAĞLIĞI: tablo değerleri 1200 döngü başına düşen puan (yaklaşık gerçek bir gün), yavaş kademeli aşınma ---
+    // --- SANTRAL SAĞLIĞI: tablo değerleri YÜZDE (örn. 0.10 = %10), bu kayıp 1200 döngüye yayılır ---
+    // (Önceki sürümde ham puan olarak uygulanıyordu; kömür günde 0.10 PUAN kaybediyordu, bu da 1000 günde bile
+    // fark edilmiyordu. Artık 1200 döngüde (yaklaşık 50 gerçek dakika) o yüzdelik kayıp gerçekleşiyor.)
     structures.forEach(s => {
-        let decayPer1200 = HEALTH_DECAY_PER_1200[s.type];
-        if (!decayPer1200) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
+        let decayPercent = HEALTH_DECAY_PER_1200[s.type];
+        if (!decayPercent) return; // ev/ağaç gibi ömrü olmayan yapılar etkilenmez
         if (s.health === undefined || s.health === null) s.health = 100;
-        if (s.health > 0) s.health = Math.max(0, s.health - (decayPer1200 / 1200));
+        if (s.health > 0) s.health = Math.max(0, s.health - (decayPercent * 100 / 1200));
     });
 
     // --- ARIZA: ortalama her 1200 döngüde rastgele bir santral arıza verir, üretimi tamamen durur ---
@@ -1201,7 +1213,7 @@ function runTick() {
     let income = soldEnergy * currentPrice;
     let expense = state.totalOpex;
     let displayEms = Math.max(0, state.emissions); 
-    let carbonTax = displayEms > 50 ? (displayEms - 50) * 1.5 : 0; 
+    let carbonTax = displayEms > 30 ? (displayEms - 30) * 2.5 : 0; 
 
     // BÜTÇE GÜNCELLEMESİ
     state.budget += (income - expense - carbonTax);
@@ -1285,7 +1297,7 @@ function runTick() {
         
         let advisorDiv = document.getElementById('advisor-message');
         let currentAdvisorState = 'warning';
-        if (displayEms > 50) {
+        if (displayEms > 30) {
             advisorDiv.innerHTML = `🚨 DANIŞMAN: Bütçen karbon vergisinden eriyor (-${carbonTax.toFixed(1)} 💰). Fosil yakıtları sök veya acilen <b>Ağaç Dik</b>!`;
             advisorDiv.className = "danger-advisor";
             currentAdvisorState = 'danger';
