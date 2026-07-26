@@ -1266,6 +1266,23 @@ function runTick() {
     // Nüfus, mevcut kapasiteyi (maxPopulation) hiçbir durumda aşamaz
     state.population = Math.max(0, Math.min(state.population, state.maxPopulation));
 
+    // --- YENİ: NÜFUS GÖÇÜ KONTROLÜ (GAME OVER) ---
+    if (state.population <= 0) {
+        state.population = 0;
+        document.getElementById('population').innerText = "0"; // Ekranda 0 göster
+        clearInterval(gameLoop); // Zamanın akmasını (oyunu) durdur
+        if (window.SoundEngine) window.SoundEngine.error(); // Hata sesi çal
+        
+        // Nüfus göçü penceresi çıkar ve onaylanınca oyunu sıfırla
+        showConfirm(
+            "👻 ŞEHİR TERK EDİLDİ!\n\nSürekli yaşanan elektrik kesintileri yüzünden halk tamamen göç etti ve VoltCity bir hayalet şehre dönüştü. Oyunu kaybettin.\n\nYeni bir enerji politikasıyla sıfırdan başlamak ister misin?", 
+            function() {
+                resetGame(); // Oyunu sil ve baştan başlat
+            }
+        );
+        return; // Aşağıdaki kodların çalışmasını engelle ve döngüden çık
+    }
+
     if (!simulatingOffline) {
         document.getElementById('budget').innerText = Math.floor(state.budget).toLocaleString();
         document.getElementById('emissions').innerText = displayEms.toFixed(1);
