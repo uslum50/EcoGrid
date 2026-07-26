@@ -112,7 +112,7 @@ window.repairPlant = function (row, col) {
     if (!s) return;
     if (s.broken) { showAlert("Bu tesis arızalı, önce arızayı gidermen gerekiyor."); return; }
     let health = (s.health === undefined || s.health === null) ? 100 : s.health;
-    if (health >= 100) { showAlert("Bu tesis zaten tam sağlıklı, bakıma gerek yok."); return; }
+    if (Math.round(health) >= 100) { showAlert("Bu tesis zaten tam sağlıklı, bakıma gerek yok."); return; }
     let mult = getMaintenanceMultiplier(health);
     let plant = plants[s.type];
 
