@@ -1239,8 +1239,25 @@ function runTick() {
     const UNDERPRODUCTION_PENALTY_PER_MWH = 10.0; 
     let underproductionCost = deficitEnergy * UNDERPRODUCTION_PENALTY_PER_MWH;
 
-    // BÜTÇE GÜNCELLEMESİ (Eksik üretim cezası eklendi)
+    // BÜTÇE GÜNCELLEMESİ
     state.budget += (income - expense - carbonTax - overproductionCost - underproductionCost);
+
+    // --- YENİ: İFLAS KONTROLÜ (GAME OVER) ---
+    if (state.budget <= 0) {
+        state.budget = 0;
+        document.getElementById('budget').innerText = "0"; // Ekranda 0 göster
+        clearInterval(gameLoop); // Zamanın akmasını (oyunu) durdur
+        if (window.SoundEngine) window.SoundEngine.error(); // Hata sesi çal
+        
+        // İflas penceresi çıkar ve onaylanınca oyunu sıfırla
+        showConfirm(
+            "💀 İFLAS ETTİN!\n\nKasan tamamen sıfırlandı, borçlarını ödeyemedin ve enerji ağı çöktü. Şehir maalesef karanlığa gömüldü.\n\nHatalarından ders çıkarıp baştan başlamak ister misin?", 
+            function() {
+                resetGame(); // Oyunu sil ve baştan başlat
+            }
+        );
+        return; // Aşağıdaki kodların çalışmasını engelle ve döngüden çık
+    }
 
     // NÜFUS ARTIŞI (tolerans payı içinde kalan fark "denge" sayılır, kesinti tetiklemez)
     if (netEnergy >= -BALANCE_TOLERANCE && state.population < state.maxPopulation) state.population += 1;
@@ -1364,4 +1381,5 @@ function runTick() {
     saveGame();
 }
 
-setInterval(runTick, 2500);
+// Döngüyü durdurabilmek için ona bir isim (gameLoop) veriyoruz
+let gameLoop = setInterval(runTick, 2500);
