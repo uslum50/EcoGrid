@@ -1229,11 +1229,18 @@ function runTick() {
     let expense = state.totalOpex;
     let displayEms = Math.max(0, state.emissions); 
     let carbonTax = displayEms > 30 ? (displayEms - 30) * 2.5 : 0; 
-    const OVERPRODUCTION_PENALTY_PER_MWH = 2.0; // Depolanamayan/satılamayan fazla üretim artık boşa değil, maliyetli
+    
+    // YENİ: Fazla üretim cezası 100 olarak güncellendi
+    const OVERPRODUCTION_PENALTY_PER_MWH = 100.0; 
     let overproductionCost = wastedEnergy * OVERPRODUCTION_PENALTY_PER_MWH;
 
-    // BÜTÇE GÜNCELLEMESİ
-    state.budget += (income - expense - carbonTax - overproductionCost);
+    // YENİ: Eksik üretim (şebekeye verilemeyen) hesaplaması ve cezası
+    let deficitEnergy = Math.max(0, currentDemand - totalNetProduction);
+    const UNDERPRODUCTION_PENALTY_PER_MWH = 100.0; 
+    let underproductionCost = deficitEnergy * UNDERPRODUCTION_PENALTY_PER_MWH;
+
+    // BÜTÇE GÜNCELLEMESİ (Eksik üretim cezası eklendi)
+    state.budget += (income - expense - carbonTax - overproductionCost - underproductionCost);
 
     // NÜFUS ARTIŞI (tolerans payı içinde kalan fark "denge" sayılır, kesinti tetiklemez)
     if (netEnergy >= -BALANCE_TOLERANCE && state.population < state.maxPopulation) state.population += 1;
@@ -1258,7 +1265,11 @@ function runTick() {
         
         let breakdownHtml = `<span style="color:#2ecc71;">+${income.toFixed(1)} 💰 Gelir</span> | <span style="color:#e74c3c;">-${expense.toFixed(1)} 💰 Gider</span>`;
         if (carbonTax > 0) breakdownHtml += ` | <span class="tax-alert">-${carbonTax.toFixed(1)} 💰 Vergi</span>`;
-        if (overproductionCost > 0) breakdownHtml += ` | <span style="color:#d35400;">-${overproductionCost.toFixed(1)} 💰 Fazla Üretim</span>`;
+        if (overproductionCost > 0) breakdownHtml += ` | <span style="color:#d35400;">-${overproductionCost.toFixed(1)} 💰 İsraf Cezası</span>`;
+        
+        // YENİ: Kesinti/Eksik üretim cezasını ekrana yansıt
+        if (underproductionCost > 0) breakdownHtml += ` | <span style="color:#c0392b;">-${underproductionCost.toFixed(1)} 💰 Kesinti Cezası</span>`;
+        
         breakdownHtml += ` | <span style="color:#f1c40f;">Fiyat: ${currentPrice.toFixed(1)} 💰/MWh</span>`;
         document.getElementById('budgetBreakdown').innerHTML = breakdownHtml;
 
