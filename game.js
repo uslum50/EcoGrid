@@ -244,6 +244,17 @@ document.addEventListener('visibilitychange', function () {
 });
 window.addEventListener('blur', function () { window.SoundEngine.suspendForBackground(); });
 window.addEventListener('focus', function () { window.SoundEngine.resumeFromBackground(); });
+// YEDEK MEKANİZMA: Bazı WebView sarmalayıcılarında (Appilix/WebIntoApp vb.)
+// visibilitychange/blur olayları arka plana alındığında hiç tetiklenmiyor.
+// Bu yüzden document.hidden durumunu düzenli aralıklarla da kontrol ediyoruz.
+let wasHiddenLastCheck = document.hidden;
+setInterval(function () {
+    if (document.hidden !== wasHiddenLastCheck) {
+        wasHiddenLastCheck = document.hidden;
+        if (document.hidden) window.SoundEngine.suspendForBackground();
+        else window.SoundEngine.resumeFromBackground();
+    }
+}, 1000); // her 1 saniyede bir kontrol et
 
 // --- ÖZEL BİLDİRİM PENCERESİ (tarayıcının "site diyor ki" ön ekini tamamen ortadan kaldırır) ---
 (function () {
