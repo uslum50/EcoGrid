@@ -34,9 +34,9 @@ function getSolarFactor(hour) {
 
 // Kişi başı saatlik tüketim, güne göre değişir (akşam yüksek, gece düşük, gündüz normal)
 function getCurrentDemandPerPerson() {
-    if (state.hour >= 18 && state.hour < 24) return 0.025; // Akşam: 1000 kişi -> 25 MWh
-    if (state.hour >= 7 && state.hour < 18) return 0.020;  // Gündüz: 1000 kişi -> 20 MWh
-    return 0.015;                                           // Gece: 1000 kişi -> 15 MWh
+    if (state.hour >= 18 && state.hour < 24) return 0.030; // Akşam: 1000 kişi -> 30 MWh (%20 artırıldı)
+    if (state.hour >= 7 && state.hour < 18) return 0.024;  // Gündüz: 1000 kişi -> 24 MWh (%20 artırıldı)
+    return 0.018;                                           // Gece: 1000 kişi -> 18 MWh (%20 artırıldı)
 }
 
 // Zamana göre değişen satış fiyatı (💰/MWh)
@@ -80,7 +80,7 @@ function updateMaintenancePanel() {
         if (s.broken) {
             color = '#c0392b';
             statusText = '⚠️ ARIZALI (Üretim Durdu)';
-            let fixCost = Math.round(s.capacity * (plant.costPerMw / 10));
+            let fixCost = Math.round(s.capacity * (plant.costPerMw / 5));
             btnHtml = `<button class="build-btn" style="background:#e67e22; color:#fff;" onclick="fixBreakdown(${s.row},${s.col})">⚙️ Arızayı Gider (${fixCost.toLocaleString()} 💰)</button>`;
         } else {
     let mult = getMaintenanceMultiplier(health);
@@ -138,7 +138,7 @@ window.fixBreakdown = function (row, col) {
     let s = structures.find(st => st.row === row && st.col === col);
     if (!s || !s.broken) return;
     let plant = plants[s.type];
-    let cost = Math.round(s.capacity * (plant.costPerMw / 10));
+    let cost = Math.round(s.capacity * (plant.costPerMw / 5));
 
     showConfirm(
         `⚙️ ${plant.icon} ${plant.name} ARIZA GİDERME\n\nTesis arızalı, üretim durmuş durumda.\nMaliyet: ${cost.toLocaleString()} 💰\n\nArıza giderilsin mi?`,
@@ -180,13 +180,14 @@ const plants = {
 window.SoundEngine = (function () {
     let ctx = null;
     let enabled = true;
+    let isBackgrounded = false; // Arka plandayken ses motoru hiçbir şekilde ses üretmez/kontexti açmaz
     try {
         const saved = localStorage.getItem('ecogrid_sound_enabled');
         if (saved !== null) enabled = saved === '1';
     } catch (e) { /* localStorage yoksa sessizce devam et */ }
 
     function getCtx() {
-        if (!enabled) return null;
+        if (!enabled || isBackgrounded) return null; // ARKA PLANDAYKEN: asla context açma/resume etme
         if (!ctx) {
             try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
             catch (e) { return null; }
@@ -231,9 +232,9 @@ window.SoundEngine = (function () {
         },
         isEnabled: function () { return enabled; },
         // Uygulama arka plana alındığında çağrılır: ses tamamen susar
-        suspendForBackground: function () { if (ctx && ctx.state === 'running') ctx.suspend(); },
+        suspendForBackground: function () { isBackgrounded = true; if (ctx && ctx.state === 'running') ctx.suspend(); },
         // Uygulama tekrar öne geldiğinde çağrılır: kullanıcı sesi kapatmadıysa devam eder
-        resumeFromBackground: function () { if (enabled && ctx && ctx.state === 'suspended') ctx.resume(); }
+        resumeFromBackground: function () { isBackgrounded = false; if (enabled && ctx && ctx.state === 'suspended') ctx.resume(); }
     };
 })();
 
@@ -1228,9 +1229,11 @@ function runTick() {
     let expense = state.totalOpex;
     let displayEms = Math.max(0, state.emissions); 
     let carbonTax = displayEms > 30 ? (displayEms - 30) * 2.5 : 0; 
+    const OVERPRODUCTION_PENALTY_PER_MWH = 2.0; // Depolanamayan/satılamayan fazla üretim artık boşa değil, maliyetli
+    let overproductionCost = wastedEnergy * OVERPRODUCTION_PENALTY_PER_MWH;
 
     // BÜTÇE GÜNCELLEMESİ
-    state.budget += (income - expense - carbonTax);
+    state.budget += (income - expense - carbonTax - overproductionCost);
 
     // NÜFUS ARTIŞI (tolerans payı içinde kalan fark "denge" sayılır, kesinti tetiklemez)
     if (netEnergy >= -BALANCE_TOLERANCE && state.population < state.maxPopulation) state.population += 1;
@@ -1255,6 +1258,7 @@ function runTick() {
         
         let breakdownHtml = `<span style="color:#2ecc71;">+${income.toFixed(1)} 💰 Gelir</span> | <span style="color:#e74c3c;">-${expense.toFixed(1)} 💰 Gider</span>`;
         if (carbonTax > 0) breakdownHtml += ` | <span class="tax-alert">-${carbonTax.toFixed(1)} 💰 Vergi</span>`;
+        if (overproductionCost > 0) breakdownHtml += ` | <span style="color:#d35400;">-${overproductionCost.toFixed(1)} 💰 Fazla Üretim</span>`;
         breakdownHtml += ` | <span style="color:#f1c40f;">Fiyat: ${currentPrice.toFixed(1)} 💰/MWh</span>`;
         document.getElementById('budgetBreakdown').innerHTML = breakdownHtml;
 
@@ -1328,7 +1332,7 @@ function runTick() {
             advisorDiv.className = "warning-advisor";
             currentAdvisorState = 'warning';
         } else if (wastedEnergy > 20) {
-            advisorDiv.innerHTML = `⚠️ DANIŞMAN: ${wastedEnergy.toFixed(1)} MWh israf var. Gelir getirmiyor ama bakım masrafı kesiliyor! Tesis sök ya da Depolama kur.`;
+            advisorDiv.innerHTML = `⚠️ DANIŞMAN: ${wastedEnergy.toFixed(1)} MWh israf var, bu sana saatte ${(wastedEnergy * OVERPRODUCTION_PENALTY_PER_MWH).toFixed(1)} 💰 fazladan gidere mal oluyor! Tesis sök ya da Depolama kur.`;
             advisorDiv.className = "warning-advisor";
             currentAdvisorState = 'warning';
         } else {
