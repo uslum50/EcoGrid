@@ -1037,7 +1037,7 @@ function generateDailyGoal() {
     let add = Math.floor(Math.random() * 3 + 2) * 10; // 20-50 birim arası ekle
     let target = current + add;
     let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)', house: 'Ev (Blok)'};
-    return { type: t, target: target, reward: add * 400, desc: `${names[t]} kapasiteni ${target} yap` };
+    return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap` };
 }
 
 // Oyuna başlarken 3 görev oluştur
