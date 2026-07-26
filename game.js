@@ -997,9 +997,25 @@ window.triggerUpgrade = function() {
 window.triggerDemolish = function() {
     if(!selectedMesh) return;
     let d = selectedMesh.userData;
+    let plant = plants[d.type]; // Tesisin birim maliyetini almak için
+    
+    // YENİ: Söküm maliyetini hesapla (Kapasite * Birim Maliyet * %10)
+    let demolishCost = (d.capacity * plant.costPerMw) * 0.10;
 
-    showConfirm(`Tesisi söküyorsun. Onaylıyor musun?`, function () {
-        SoundEngine.demolish();
+    showConfirm(`🏗️ ${d.icon} ${plant.name} tesisini sökmek üzeresin.\n\nSöküm Maliyeti: ${demolishCost.toLocaleString()} 💰\n\nOnaylıyor musun?`, function () {
+        
+        // YENİ: Bütçe kontrolü (Sökmek için de paraya ihtiyaç var)
+        if (state.budget < demolishCost) {
+            if (window.SoundEngine) window.SoundEngine.error();
+            showAlert(`Yetersiz Bütçe!\nBu tesisi sökmek için ${demolishCost.toLocaleString()} 💰 ödemen gerekiyor.`);
+            return;
+        }
+
+        // Söküm maliyetini kasadan düş
+        state.budget -= demolishCost;
+        if (window.SoundEngine) window.SoundEngine.demolish();
+
+        // Sistemden tamamen çıkartma işlemleri
         state.emissions -= d.ems; 
         state.totalOpex = Math.max(0, state.totalOpex - d.opex);
         
