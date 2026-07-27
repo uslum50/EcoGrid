@@ -100,7 +100,7 @@ function updateMaintenancePanel() {
 
         html += `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #ecf0f1; flex-wrap:wrap;">
             <div style="min-width:140px;">
-                <div><b>${plant.icon} ${plant.name}</b> — ${s.capacity} MW (${zoneName})</div>
+                <div><b>${plant.icon} ${plant.name}${s.type === 'battery' ? (s.batteryTarget === 'wind' ? ' (🌬️ Rüzgar)' : ' (☀️ Güneş)') : ''}</b> — ${s.capacity} MW (${zoneName})</div>
                 <div style="font-size:12px; color:${color}; font-weight:bold;">${s.broken ? statusText : 'Sağlık: ' + statusText}</div>
             </div>
             ${btnHtml}
