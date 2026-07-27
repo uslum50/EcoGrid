@@ -798,6 +798,66 @@ function updateCostPreview() {
     `;
 }
 
+// --- YENİ SÖKÜM PANELİ KODLARI ---
+function updateDemolishPanel() {
+    let container = document.getElementById('demolish-list');
+    if (!container) return;
+    
+    if (structures.length === 0) {
+        container.innerHTML = "<div style='font-size: 13px; color: #7f8c8d; padding: 10px; background: #fff; border-radius: 5px;'>Şu an haritada sökülecek tesis yok.</div>";
+        return;
+    }
+
+    let html = "";
+    // En son kurulan en üstte görünsün diye listeyi ters çeviriyoruz
+    [...structures].reverse().forEach(s => {
+        let plant = plants[s.type];
+        let zoneName = s.zone === 'city' ? 'Şehir İçi' : s.zone === 'rural' ? 'Kırsal' : 'Orman';
+        let capText = s.type === 'tree' ? `${s.capacity * 10} Bin Ağaç` : s.type === 'house' ? `${s.capacity} Blok Ev` : `${s.capacity} MW`;
+        
+        html += `<div style="display:flex; justify-content:space-between; align-items:center; background: #fff; padding: 10px; border: 1px solid #bdc3c7; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div style="font-size: 14px;"><b>${plant.icon} ${plant.name}</b> <span style="font-size:12px; color:#7f8c8d;">(${capText} - ${zoneName})</span></div>
+            <button class="action-btn demolish" style="width: auto; margin: 0; padding: 6px 12px;" onclick="demolishPlantFromList(${s.row}, ${s.col})">❌ Sök</button>
+        </div>`;
+    });
+    container.innerHTML = html;
+}
+
+window.demolishPlantFromList = function(row, col) {
+    let s = structures.find(st => st.row === row && st.col === col);
+    if (!s) return;
+    let plant = plants[s.type];
+
+    // Ücretsiz söküm onayı
+    showConfirm(`🏗️ ${plant.icon} ${plant.name} tesisini haritadan tamamen söküyorsun (Ücretsiz).\n\nOnaylıyor musun?`, function () {
+        if (window.SoundEngine) window.SoundEngine.demolish();
+
+        let meshObj = meshes.find(m => m.userData.gridRef && m.userData.gridRef.row === row && m.userData.gridRef.col === col);
+        if (meshObj) {
+            let d = meshObj.userData;
+            state.emissions -= d.ems; 
+            state.totalOpex = Math.max(0, state.totalOpex - d.opex);
+            
+            if (d.type === 'house') { state.installed[d.zone][d.type] -= d.capacity; state.maxPopulation -= (d.capacity * 50); }
+            else if (d.type === 'battery') state.installed[d.zone][d.batteryTarget + 'Storage'] -= d.capacity;
+            else state.installed[d.zone][d.type] -= d.capacity;
+            
+            if (d.zone === "city") state.land.cityUsed = Math.max(0, state.land.cityUsed - d.land);
+            else if (d.zone === "rural") state.land.ruralUsed = Math.max(0, state.land.ruralUsed - d.land);
+            else if (d.zone === "forest") state.land.forestUsed = Math.max(0, state.land.forestUsed - d.land);
+
+            d.gridRef.isOccupied = false; 
+            state.plantCounts[d.type] = Math.max(0, (state.plantCounts[d.type] || 0) - 1);
+            worldGroup.remove(meshObj);
+            meshes = meshes.filter(m => m !== meshObj);
+        }
+
+        structures = structures.filter(st => !(st.row === row && st.col === col));
+        updateUI();
+        saveGame();
+    });
+};
+
 function updateUI() {
 
     document.getElementById('cityMaxDisplay').innerText = state.land.cityMax;
@@ -812,6 +872,9 @@ function updateUI() {
 
     document.getElementById('budget').innerText =
         Math.floor(state.budget);
+    
+    // YENİ EKLENEN KISIM: Arayüz güncellendiğinde söküm listesini de güncelle
+    if (typeof updateDemolishPanel === 'function') updateDemolishPanel();
 
 }
 
