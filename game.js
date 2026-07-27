@@ -787,17 +787,6 @@ function updateCostPreview() {
     else if (currentPreviewType === 'house') capText = `${capacity} Blok Ev (+${capacity * 50} Kapasite)`;
     else capText = `${capacity} MW ${plant.name}`;
 
-    // YENİ: Santral türüne göre kapasite faktörü bilgisini belirle
-    let cfText = "";
-    if (currentPreviewType === 'coal') cfText = "%75 (Sabit Üretim)";
-    else if (currentPreviewType === 'gas') cfText = "%63 (Esnek Yük)";
-    else if (currentPreviewType === 'geo') cfText = "%83 (Tam Baz Yük)";
-    else if (currentPreviewType === 'hydro') cfText = "%46 (Mevsimsel)";
-    else if (currentPreviewType === 'solar') cfText = "☀️ Değişken (Gündüz aktif, Gece %0)";
-    else if (currentPreviewType === 'wind') cfText = "🌬️ Değişken (%30 ile %75 arası dalgalanır)";
-    else if (currentPreviewType === 'battery') cfText = "🔋 Bağlı olduğu kaynağa göre";
-    else cfText = "Yok";
-
     previewBox.innerHTML = `
         <div style="font-size:15px; margin-bottom:5px;"><b>Planlanan:</b> ${plant.icon} ${capText}</div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; font-size:13px;">
@@ -805,7 +794,6 @@ function updateCostPreview() {
             <div><b>Gider:</b> <span style="color:#e74c3c;">-${totalOpex} 💰/döngü</span></div>
             <div><b>Karbon Etkisi:</b> ${emsText}</div>
             <div><b>Arazi:</b> ${totalLand} ha</div>
-            ${cfText !== "Yok" ? `<div style="grid-column: span 2; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #bdc3c7;"><b>Kapasite Faktörü:</b> <span style="color:#2980b9;">${cfText}</span></div>` : ""}
         </div>
         ${warningHtml}
     `;
