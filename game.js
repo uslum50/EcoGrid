@@ -15,6 +15,8 @@ let state = {
     solarFactor: 0.0, windFactor: 0.33 // Güneş/rüzgar için gün boyu değişen anlık kapasite faktörü
 };
 
+let gameLoop;
+
 // 1 MW kurulu güç başına saatlik ortalama üretim (kapasite faktörü, MWh) - sadece sabit kaynaklar için
 const CAPACITY_FACTOR = { coal: 0.75, gas: 0.63, geo: 0.83, hydro: 0.46 };
 
@@ -1518,4 +1520,4 @@ function runTick() {
 }
 
 // Döngüyü durdurabilmek için ona bir isim (gameLoop) veriyoruz
-let gameLoop = setInterval(runTick, 2500);
+gameLoop = setInterval(runTick, 2500);
