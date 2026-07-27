@@ -138,7 +138,7 @@
     <!-- SEKME ÇUBUĞU -->
     <div class="tabs-bar">
         <button class="tab-btn" id="tabGoalsBtn" onclick="toggleTab('goals')">🎯 Görevler</button>
-        <button class="tab-btn" id="tabBuildBtn" onclick="toggleTab('build')">🏗️ Santral Kur</button>
+        <button class="tab-btn" id="tabBuildBtn" onclick="toggleTab('build')">🏗️ Kur / Sök</button>
         <button class="tab-btn" id="tabMaintBtn" onclick="toggleTab('maint')">🔧 Bakım</button>
         <button class="tab-btn sound-btn" id="soundToggleBtn" onclick="toggleSound()">🔊</button>
         <button class="tab-btn sound-btn" style="background:#c0392b;" onclick="resetGame()" title="Oyunu Sıfırla">🔄</button>
@@ -202,6 +202,12 @@
             <button class="build-btn btn-battery" onmouseenter="showPreview('battery')" onclick="buildPlant('battery')">🔋 Depolama (1.500 💰/MW)</button>
             <button class="build-btn btn-tree" onmouseenter="showPreview('tree')" onclick="buildPlant('tree')">🌳 Ağaç (100 💰/Birim)</button>
             <button class="build-btn btn-house" onmouseenter="showPreview('house')" onclick="buildPlant('house')">🏠 Ev Kur (2.000 💰/Blok)</button>
+        </div>
+
+        <!-- YENİ: Söküm Listesi Bölümü -->
+        <div class="section-title" style="margin-top: 20px;">🚜 Mevcut Tesisleri Sök (Ücretsiz)</div>
+        <div id="demolish-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto; padding-right: 5px; margin-bottom: 15px;">
+            <!-- Dinamik söküm listesi buraya gelecek -->
         </div>
     </div>
 
