@@ -581,7 +581,8 @@ function generateInitialCity(skipRecord) {
         
         worldGroup.add(houseGroup);
         meshes.push(houseGroup);
-        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '', health: 100, broken: false });
+        // YENİ: İlk evleri koruma altına almak için isInitial bayrağı eklendi
+        if (!skipRecord) structures.push({ type: 'house', zone: 'city', capacity: 1, row: randomTile.row, col: randomTile.col, batteryTarget: '', health: 100, broken: false, isInitial: true });
     }
     if (!skipRecord) state.land.cityUsed += 100; // 20 ev x 5 ha
 }
@@ -809,17 +810,45 @@ function updateDemolishPanel() {
     }
 
     let html = "";
-    // En son kurulan en üstte görünsün diye listeyi ters çeviriyoruz
-    [...structures].reverse().forEach(s => {
+    let visibleCount = 0;
+
+    // Orijinal dizilim sırasını kaybetmemek için index'i kaydederek listeyi ters çeviriyoruz
+    let listWithIndex = structures.map((s, index) => ({ s, originalIndex: index })).reverse();
+
+    listWithIndex.forEach(item => {
+        let s = item.s;
+        let originalIndex = item.originalIndex;
+
+        // 1. KURAL: Ağaçları söküm listesinden tamamen gizle
+        if (s.type === 'tree') return; 
+
+        // 2. KURAL: Oyun başındaki ilk 20 evi (ana yerleşkeyi) gizle 
+        // (Eski kayıtlı oyunları da kapsasın diye originalIndex < 20 kontrolü de yapıyoruz)
+        if (s.type === 'house' && (s.isInitial || originalIndex < 20)) return;
+
         let plant = plants[s.type];
         let zoneName = s.zone === 'city' ? 'Şehir İçi' : s.zone === 'rural' ? 'Kırsal' : 'Orman';
-        let capText = s.type === 'tree' ? `${s.capacity * 10} Bin Ağaç` : s.type === 'house' ? `${s.capacity} Blok Ev` : `${s.capacity} MW`;
+        let capText = s.type === 'house' ? `${s.capacity} Blok Ev` : `${s.capacity} MW`;
+        
+        // 3. KURAL: Depolamanın Güneşe mi Rüzgara mı bağlı olduğunu yaz
+        if (s.type === 'battery') {
+            let targetName = s.batteryTarget === 'solar' ? '☀️ Güneş' : '🌬️ Rüzgar';
+            capText += ` (Bağlı: ${targetName})`;
+        }
         
         html += `<div style="display:flex; justify-content:space-between; align-items:center; background: #fff; padding: 10px; border: 1px solid #bdc3c7; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <div style="font-size: 14px;"><b>${plant.icon} ${plant.name}</b> <span style="font-size:12px; color:#7f8c8d;">(${capText} - ${zoneName})</span></div>
             <button class="action-btn demolish" style="width: auto; margin: 0; padding: 6px 12px;" onclick="demolishPlantFromList(${s.row}, ${s.col})">❌ Sök</button>
         </div>`;
+        
+        visibleCount++;
     });
+
+    // Eğer tüm filtrelerden sonra listede gösterecek hiçbir şey kalmadıysa boş uyarısı ver
+    if (visibleCount === 0) {
+        html = "<div style='font-size: 13px; color: #7f8c8d; padding: 10px; background: #fff; border-radius: 5px;'>Şu an sökülebilecek (ağaçlar ve ana evler hariç) bir tesis yok.</div>";
+    }
+
     container.innerHTML = html;
 }
 
