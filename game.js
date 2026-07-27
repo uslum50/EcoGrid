@@ -172,8 +172,8 @@ const plants = {
     wind:    { costPerMw: 1800, emissionPerMw: 0,   opexPerMw: 0.45,landPerMw: 10.0,allowedInCity: false, name: "Rüzgar", icon: "🌬️", color: 0xffffff, geometry: 'turbine', modelPath: 'assets/models/power/wind.glb' },
     solar:   { costPerMw: 800,  emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 3.0, allowedInCity: true,  name: "Güneş", icon: "☀️", color: 0x111111, geometry: 'panel', modelPath: 'assets/models/power/solar.glb' },
     battery: { costPerMw: 1500, emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 0.1, allowedInCity: true,  name: "Depolama", icon: "🔋", color: 0x8e44ad, geometry: 'box', modelPath: 'assets/models/power/battery.glb' },
-    tree:    { costPerMw: 100, emissionPerMw:-0.08, opexPerMw: 0.05,landPerMw: 1.0, allowedInCity: false, name: "Orman", icon: "🌳", color: 0x27ae60, geometry: 'cone', modelPath: 'assets/models/power/tree.glb' },
-    house:   { costPerMw: 2000, emissionPerMw: 0.1, opexPerMw: 0.1, landPerMw: 5.0, allowedInCity: true,  name: "Yerleşim", icon: "🏠", color: 0xecf0f1, geometry: 'house', modelPath: 'assets/models/buildings/house.glb' }
+    tree:    { costPerMw: 100, emissionPerMw:-0.08, opexPerMw: 0, landPerMw: 1.0, allowedInCity: false, name: "Orman", icon: "🌳", color: 0x27ae60, geometry: 'cone', modelPath: 'assets/models/power/tree.glb' },
+    house:   { costPerMw: 2000, emissionPerMw: 0.1, opexPerMw: 0, landPerMw: 5.0, allowedInCity: true,  name: "Yerleşim", icon: "🏠", color: 0xecf0f1, geometry: 'house', modelPath: 'assets/models/buildings/house.glb' }
 };
 
 // --- SES MOTORU (Harici dosya gerektirmez, tarayıcıda anlık üretilir; sadece bildirim sesleri) ---
@@ -787,6 +787,17 @@ function updateCostPreview() {
     else if (currentPreviewType === 'house') capText = `${capacity} Blok Ev (+${capacity * 50} Kapasite)`;
     else capText = `${capacity} MW ${plant.name}`;
 
+    // YENİ: Santral türüne göre kapasite faktörü bilgisini belirle
+    let cfText = "";
+    if (currentPreviewType === 'coal') cfText = "%75 (Sabit Üretim)";
+    else if (currentPreviewType === 'gas') cfText = "%63 (Esnek Yük)";
+    else if (currentPreviewType === 'geo') cfText = "%83 (Tam Baz Yük)";
+    else if (currentPreviewType === 'hydro') cfText = "%46 (Mevsimsel)";
+    else if (currentPreviewType === 'solar') cfText = "☀️ Değişken (Gündüz aktif, Gece %0)";
+    else if (currentPreviewType === 'wind') cfText = "🌬️ Değişken (%30 ile %75 arası dalgalanır)";
+    else if (currentPreviewType === 'battery') cfText = "🔋 Bağlı olduğu kaynağa göre";
+    else cfText = "Yok";
+
     previewBox.innerHTML = `
         <div style="font-size:15px; margin-bottom:5px;"><b>Planlanan:</b> ${plant.icon} ${capText}</div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; font-size:13px;">
@@ -794,11 +805,11 @@ function updateCostPreview() {
             <div><b>Gider:</b> <span style="color:#e74c3c;">-${totalOpex} 💰/döngü</span></div>
             <div><b>Karbon Etkisi:</b> ${emsText}</div>
             <div><b>Arazi:</b> ${totalLand} ha</div>
+            ${cfText !== "Yok" ? `<div style="grid-column: span 2; margin-top: 5px; padding-top: 5px; border-top: 1px dashed #bdc3c7;"><b>Kapasite Faktörü:</b> <span style="color:#2980b9;">${cfText}</span></div>` : ""}
         </div>
         ${warningHtml}
     `;
 }
-
 // --- YENİ SÖKÜM PANELİ KODLARI ---
 function updateDemolishPanel() {
     let container = document.getElementById('demolish-list');
