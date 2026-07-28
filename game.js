@@ -52,7 +52,7 @@ function getCurrentPrice() {
 // Her 1200 döngüde (yaklaşık bir gerçek gün) santralin kaybettiği sağlık puanı
 const HEALTH_DECAY_PER_1200 = { hydro: 0.02, solar: 0.04, wind: 0.06, geo: 0.07, coal: 0.10, gas: 0.12, battery: 0.20 };
 // MW başına bakım maliyeti (💰) - baz değerler
-const MAINTENANCE_COST_PER_MW = { hydro: 2, solar: 4, wind: 6, geo: 8, battery: 10, coal: 12, gas: 14 };
+const MAINTENANCE_COST_PER_MW = { hydro: 6, solar: 12, wind: 18, geo: 24, battery: 30, coal: 36, gas: 42 };
 const MAINTENANCE_COST_MULTIPLIER = 5; // Bakım maliyetleri genel olarak 5 kat artırıldı
 // Arıza olasılığı: ortalama her 1200 döngüde bir santral arıza verir
 const BREAKDOWN_CHANCE_PER_TICK = 1 / 1200;
