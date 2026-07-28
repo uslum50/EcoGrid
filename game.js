@@ -1155,7 +1155,7 @@ function generateDailyGoal() {
     let types = ['solar', 'wind', 'battery', 'tree', 'house'];
     let t = types[Math.floor(Math.random() * types.length)];
     let current = getCapacity(t);
-    let add = Math.floor(Math.random() * 3 + 2) * 10; // 20-50 birim arası ekle
+    let add = Math.floor(Math.random() * 3 + 1) * 5; // 5-15 birim arası ekle
     let target = current + add;
     let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)', house: 'Ev (Blok)'};
     return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap` };
