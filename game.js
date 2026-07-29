@@ -13,7 +13,7 @@ let state = {
     plantCounts: { coal:0, gas:0, geo:0, hydro:0, solar:0, wind:0, battery:0, tree:0, house:20 },
     solarStorageCharge: 0, windStorageCharge: 0, // Güneşe/rüzgara bağlı depoların o anki dolu miktarı (MWh) - birbirinden bağımsız
     solarFactor: 0.0, windFactor: 0.33, // Güneş/rüzgar için gün boyu değişen anlık kapasite faktörü
-    dailyGoalTicks: 0
+    dailyGoalTicks: 0,
     loginRewardTicks: 0
 };
 
