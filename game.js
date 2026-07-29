@@ -14,7 +14,10 @@ let state = {
     solarStorageCharge: 0, windStorageCharge: 0, // Güneşe/rüzgara bağlı depoların o anki dolu miktarı (MWh) - birbirinden bağımsız
     solarFactor: 0.0, windFactor: 0.33, // Güneş/rüzgar için gün boyu değişen anlık kapasite faktörü
     dailyGoalTicks: 0
+    loginRewardTicks: 0
 };
+
+let dailyLoginRewardGrantedDuringCatchup = false; // Uzaktayken geçen sürede birden fazla gün geçse bile ödül sadece 1 kez verilsin
 
 let gameLoop;
 
@@ -539,6 +542,7 @@ function loadGame() {
     if (ticksToSimulate > 1) {
         simulatingOffline = true;
         let startBudget = state.budget;
+        dailyLoginRewardGrantedDuringCatchup = false;
         for (let i = 0; i < ticksToSimulate; i++) runTick();
         simulatingOffline = false;
         let deltaBudget = Math.floor(state.budget - startBudget);
@@ -1208,6 +1212,20 @@ function checkGoals() {
 
 // --- DÖNGÜ VE EFEKTLER ---
 function runTick() {
+    // GÜNLÜK GİRİŞ ÖDÜLÜ (1200 döngüde bir, birikmeden sadece 1 kez verilir)
+    state.loginRewardTicks = (state.loginRewardTicks || 0) + 1;
+    if (state.loginRewardTicks >= 1200) {
+        state.loginRewardTicks = 0;
+        if (!simulatingOffline || !dailyLoginRewardGrantedDuringCatchup) {
+            state.budget += 1000;
+            if (simulatingOffline) dailyLoginRewardGrantedDuringCatchup = true;
+            if (!simulatingOffline) {
+                SoundEngine.goal();
+                showAlert(`🎁 GÜNLÜK GİRİŞ ÖDÜLÜ!\n\nBugün oyuna girdiğin için +1.000 💰 kazandın!`);
+            }
+        }
+    }
+
     state.hour++;
     if (state.hour > 23) state.hour = 0;
     state.isDay = (state.hour >= 7 && state.hour < 18);
