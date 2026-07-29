@@ -854,10 +854,13 @@ function updateDemolishPanel() {
             capText += ` (Bağlı: ${targetName})`;
         }
         
-        html += `<div style="display:flex; justify-content:space-between; align-items:center; background: #fff; padding: 10px; border: 1px solid #bdc3c7; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-            <div style="font-size: 14px;"><b>${plant.icon} ${plant.name}</b> <span style="font-size:12px; color:#7f8c8d;">(${capText} - ${zoneName})</span></div>
-            <button class="action-btn demolish" style="width: auto; margin: 0; padding: 6px 12px;" onclick="demolishPlantFromList(${s.row}, ${s.col})">❌ Sök</button>
-        </div>`;
+       html += `<div style="display:flex; justify-content:space-between; align-items:center; background: #fff; padding: 10px; border: 1px solid #bdc3c7; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); gap: 8px; flex-wrap: wrap;">
+    <div style="font-size: 14px;"><b>${plant.icon} ${plant.name}</b> <span style="font-size:12px; color:#7f8c8d;">(${capText} - ${zoneName})</span></div>
+    <div style="display:flex; gap:6px;">
+        <button class="action-btn" style="width: auto; margin: 0; padding: 6px 12px; background:#16a085; color:#fff;" onclick="upgradePlantFromList(${s.row}, ${s.col})">➕ Ekle</button>
+        <button class="action-btn demolish" style="width: auto; margin: 0; padding: 6px 12px;" onclick="demolishPlantFromList(${s.row}, ${s.col})">❌ Sök</button>
+    </div>
+</div>`;
         
         visibleCount++;
     });
@@ -874,11 +877,9 @@ window.demolishPlantFromList = function(row, col) {
     let s = structures.find(st => st.row === row && st.col === col);
     if (!s) return;
     let plant = plants[s.type];
-
     // Ücretsiz söküm onayı
     showConfirm(`🏗️ ${plant.icon} ${plant.name} tesisini haritadan tamamen söküyorsun (Ücretsiz).\n\nOnaylıyor musun?`, function () {
         if (window.SoundEngine) window.SoundEngine.demolish();
-
         let meshObj = meshes.find(m => m.userData.gridRef && m.userData.gridRef.row === row && m.userData.gridRef.col === col);
         if (meshObj) {
             let d = meshObj.userData;
@@ -892,14 +893,77 @@ window.demolishPlantFromList = function(row, col) {
             if (d.zone === "city") state.land.cityUsed = Math.max(0, state.land.cityUsed - d.land);
             else if (d.zone === "rural") state.land.ruralUsed = Math.max(0, state.land.ruralUsed - d.land);
             else if (d.zone === "forest") state.land.forestUsed = Math.max(0, state.land.forestUsed - d.land);
-
             d.gridRef.isOccupied = false; 
             state.plantCounts[d.type] = Math.max(0, (state.plantCounts[d.type] || 0) - 1);
             worldGroup.remove(meshObj);
             meshes = meshes.filter(m => m !== meshObj);
         }
-
         structures = structures.filter(st => !(st.row === row && st.col === col));
+        updateUI();
+        saveGame();
+    });
+};
+
+window.upgradePlantFromList = function(row, col) {
+    let meshObj = meshes.find(m => m.userData.gridRef && m.userData.gridRef.row === row && m.userData.gridRef.col === col);
+    if (!meshObj) return;
+    let d = meshObj.userData;
+    let plant = plants[d.type];
+
+    showPrompt(`Kaç birim İLAVE etmek istiyorsunuz? (Birim Fiyat: ${plant.costPerMw} 💰)`, '', function (extraStr) {
+        if (!extraStr) return;
+        let extraCapacity = parseInt(extraStr);
+        if (isNaN(extraCapacity) || extraCapacity <= 0) return;
+
+        let extraCost = extraCapacity * plant.costPerMw;
+        let extraLand = extraCapacity * plant.landPerMw;
+
+        if (state.budget < extraCost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
+        if (d.zone === "city" && (state.land.cityUsed + extraLand > state.land.cityMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+        if (d.zone === "rural" && (state.land.ruralUsed + extraLand > state.land.ruralMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+        if (d.zone === "forest" && (state.land.forestUsed + extraLand > state.land.forestMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+
+        const GEN_TYPES_UP = ['coal', 'gas', 'geo', 'hydro', 'solar', 'wind'];
+        if (GEN_TYPES_UP.includes(d.type)) {
+            let totalInstalled = 0, totalBaseload = 0;
+            GEN_TYPES_UP.forEach(t => {
+                let sum = getCapacity(t);
+                totalInstalled += sum;
+                if (BASELOAD_TYPES.includes(t)) totalBaseload += sum;
+            });
+            let newTotal = totalInstalled + extraCapacity;
+            let newBaseload = totalBaseload + (BASELOAD_TYPES.includes(d.type) ? extraCapacity : 0);
+            let ratio = newTotal > 0 ? newBaseload / newTotal : 1;
+            if (ratio < BASELOAD_MIN_RATIO - 0.0001) {
+                SoundEngine.error();
+                showAlert(`⚠️ BAZ YÜK KISITI\n\nKurulu gücün en az %40'ı Kömür, Doğalgaz veya Jeotermal olmak zorunda.\n\nBu eklemeyi yaparsan baz yük oranı %${(ratio * 100).toFixed(1)}'e düşer. İzin verilmiyor.`);
+                return;
+            }
+        }
+
+        SoundEngine.upgrade();
+        state.budget -= extraCost;
+        let extraEms = extraCapacity * plant.emissionPerMw;
+        let extraOpex = extraCapacity * plant.opexPerMw;
+
+        state.emissions += extraEms;
+        state.totalOpex += extraOpex;
+
+        if (d.type === 'house') { state.installed[d.zone][d.type] += extraCapacity; state.maxPopulation += (extraCapacity * 50); }
+        else if (d.type === 'battery') state.installed[d.zone][d.batteryTarget + 'Storage'] += extraCapacity;
+        else state.installed[d.zone][d.type] += extraCapacity;
+
+        if (d.zone === "city") state.land.cityUsed += extraLand;
+        else if (d.zone === "rural") state.land.ruralUsed += extraLand;
+        else if (d.zone === "forest") state.land.forestUsed += extraLand;
+
+        d.capacity += extraCapacity;
+        d.ems += extraEms; d.opex += extraOpex; d.land += extraLand;
+
+        let structEntry = structures.find(s => s.row === row && s.col === col);
+        if (structEntry) structEntry.capacity = d.capacity;
+
+        showAlert(`✅ ${plant.icon} ${plant.name} kapasitesi ${extraCapacity} birim artırıldı!`);
         updateUI();
         saveGame();
     });
