@@ -1227,14 +1227,16 @@ function generateDailyGoal() {
     let add = Math.floor(Math.random() * 3 + 1) * 5; // 5-15 birim arası ekle
     let target = current + add;
     let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)', house: 'Ev (Blok)'};
-    return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap` };
+    
+    // YENİ: isCompleted: false eklendi
+    return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap`, isCompleted: false };
 }
 
 // Oyuna başlarken 3 görev oluştur
 dailyGoals = [generateDailyGoal(), generateDailyGoal(), generateDailyGoal()];
 
 function checkGoals() {
-    // YENİ: 1200 döngüde bir (yaklaşık 1 gün) tüm günlük görevleri yenile
+    // 1200 döngüde bir (yaklaşık 1 gün) tüm günlük görevleri yenile
     state.dailyGoalTicks = (state.dailyGoalTicks || 0) + 1;
     if (state.dailyGoalTicks >= 1200) {
         dailyGoals = [generateDailyGoal(), generateDailyGoal(), generateDailyGoal()];
@@ -1246,21 +1248,35 @@ function checkGoals() {
     let html = "";
     
     dailyGoals.forEach((goal, index) => {
-        goal.current = getCapacity(goal.type);
-        if (goal.current >= goal.target) {
-            state.budget += goal.reward;
-            if (!simulatingOffline) {
-                SoundEngine.goal();
-                showAlert(`🎉 GÜNLÜK GÖREV BAŞARILI: ${goal.desc}! \nKasa: +${goal.reward.toLocaleString()} 💰`);
+        // YENİ: Eğer görev henüz tamamlanmadıysa kontrol et
+        if (!goal.isCompleted) {
+            goal.current = getCapacity(goal.type);
+            
+            if (goal.current >= goal.target) {
+                goal.isCompleted = true; // Görevi "Tamamlandı" olarak işaretle
+                state.budget += goal.reward;
+                if (!simulatingOffline) {
+                    SoundEngine.goal();
+                    showAlert(`🎉 GÜNLÜK GÖREV BAŞARILI: ${goal.desc}! \nKasa: +${goal.reward.toLocaleString()} 💰`);
+                }
+                // DİKKAT: Eski kodda burada görev hemen yenileniyordu (dailyGoals[index] = generateDailyGoal()), o satırı sildik.
             }
-            dailyGoals[index] = generateDailyGoal(); // Yenisini oluştur
         }
-        html += `<div class="goal-item">📌 ${goal.desc}<br>Durum: ${goal.current} / ${goal.target} <br><span style="color:#27ae60;">Ödül: ${goal.reward.toLocaleString()} 💰</span></div>`;
+        
+        // YENİ: Ekrana yazdırma kısmı (Tamamlananlar yeşil tikli görünür)
+        if (goal.isCompleted) {
+            html += `<div class="goal-item" style="background:#eafaf1; border-color:#27ae60; color:#27ae60; text-align: center;">
+                ✅ <del>${goal.desc}</del><br>
+                <b>Tamamlandı! (+${goal.reward.toLocaleString()} 💰)</b>
+            </div>`;
+        } else {
+            html += `<div class="goal-item">📌 ${goal.desc}<br>Durum: ${goal.current} / ${goal.target} <br><span style="color:#27ae60;">Ödül: ${goal.reward.toLocaleString()} 💰</span></div>`;
+        }
     });
     
     container.innerHTML = html;
 
-    // Genel Görev Kontrolü
+    // Genel Görev Kontrolü (Burası aynı kalıyor)
     generalGoal.current = state.population;
     if (generalGoal.current >= generalGoal.target) {
         state.budget += generalGoal.reward;
@@ -1273,7 +1289,6 @@ function checkGoals() {
     }
     document.getElementById('generalGoalText').innerHTML = `🌟 <b>Genel Görev:</b> ${generalGoal.desc} <br> Durum: ${generalGoal.current} / ${generalGoal.target} Kişi <br><span style="color:#27ae60;">Ödül: ${generalGoal.reward.toLocaleString()} 💰</span>`;
 }
-
 // --- DÖNGÜ VE EFEKTLER ---
 function runTick() {
     // GÜNLÜK GİRİŞ ÖDÜLÜ (1200 döngüde bir, birikmeden sadece 1 kez verilir)
