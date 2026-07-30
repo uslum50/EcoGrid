@@ -58,7 +58,7 @@ const HEALTH_DECAY_PER_1200 = { hydro: 0.02, solar: 0.04, wind: 0.06, geo: 0.07,
 const MAINTENANCE_COST_PER_MW = { hydro: 6, solar: 12, wind: 18, geo: 24, battery: 30, coal: 36, gas: 42 };
 const MAINTENANCE_COST_MULTIPLIER = 5; // Bakım maliyetleri genel olarak 5 kat artırıldı
 // Arıza olasılığı: ortalama her 1200 döngüde bir santral arıza verir
-const BREAKDOWN_CHANCE_PER_TICK = 1 / 1200;
+const BREAKDOWN_CHANCE_PER_TICK = 1 / 600;
 // Baz yük kısıtı: kurulu gücün en az %40'ı bu tiplerden olmak zorunda
 const BASELOAD_TYPES = ['coal', 'gas', 'geo'];
 const BASELOAD_MIN_RATIO = 0.40;
