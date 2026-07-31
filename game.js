@@ -1694,4 +1694,4 @@ function runTick() {
 }
 
 // Döngüyü durdurabilmek için ona bir isim (gameLoop) veriyoruz
-gameLoop = setInterval(runTick, 2500);
+gameLoop = setInterval(runTick, 20000);
