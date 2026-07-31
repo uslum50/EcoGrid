@@ -152,6 +152,7 @@ window.fixBreakdown = function (row, col) {
             if (state.budget < cost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
             state.budget -= cost;
             s.broken = false;
+            s.alertDismissed = false; // Tesis onarıldığı için gizleme durumunu temizle
             SoundEngine.upgrade();
             showAlert(`✅ ${plant.icon} ${plant.name} arızası giderildi, üretime devam ediyor.`);
             updateMaintenancePanel();
@@ -180,6 +181,55 @@ const plants = {
     battery: { costPerMw: 1500, emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 0.1, allowedInCity: true,  name: "Depolama", icon: "🔋", color: 0x8e44ad, geometry: 'box', modelPath: 'assets/models/power/battery.glb' },
     tree:    { costPerMw: 100, emissionPerMw:-0.08, opexPerMw: 0, landPerMw: 1.0, allowedInCity: false, name: "Orman", icon: "🌳", color: 0x27ae60, geometry: 'cone', modelPath: 'assets/models/power/tree.glb' },
     house:   { costPerMw: 2000, emissionPerMw: 0.1, opexPerMw: 0, landPerMw: 5.0, allowedInCity: true,  name: "Yerleşim", icon: "🏠", color: 0xecf0f1, geometry: 'house', modelPath: 'assets/models/buildings/house.glb' }
+};
+
+// --- YENİ: EKRAN ÜSTÜ ARIZA BİLDİRİM PANELİ ---
+const breakdownOverlay = document.createElement('div');
+breakdownOverlay.id = 'breakdown-overlay';
+breakdownOverlay.style.cssText = 'position: fixed; top: 75px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none;';
+document.body.appendChild(breakdownOverlay);
+
+function updateBreakdownAlerts() {
+    let overlay = document.getElementById('breakdown-overlay');
+    if (!overlay) return;
+
+    // Sadece arızalı olan VE kullanıcı tarafından (Çarpı ile) henüz gizlenmemiş olanları bul
+    let brokenPlants = structures.filter(s => s.broken && !s.alertDismissed);
+    
+    if (brokenPlants.length === 0) {
+        overlay.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    brokenPlants.forEach(s => {
+        let plant = plants[s.type];
+        let fixCost = Math.round(s.capacity * (plant.costPerMw / 5));
+        let zoneName = s.zone === 'city' ? 'Şehir' : s.zone === 'rural' ? 'Kırsal' : 'Orman';
+        
+        html += `
+        <div style="background: rgba(192, 57, 43, 0.95); color: white; padding: 15px; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); width: 280px; position: relative; border-left: 5px solid #f1c40f; pointer-events: auto; animation: slideDown 0.3s ease;">
+            <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px; color:#f1c40f;">⚠️ ARIZA TESPİT EDİLDİ</div>
+            <div style="font-size: 13px; margin-bottom: 12px; line-height: 1.4;">
+                <b>${plant.icon} ${plant.name}</b> (${s.capacity} MW)<br>
+                <span style="font-size: 11px; opacity: 0.8;">Bölge: ${zoneName} - Üretim durdu!</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+                <button style="background: #f1c40f; color: #2c3e50; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;" onclick="fixBreakdown(${s.row}, ${s.col})">🔧 Onar (${fixCost.toLocaleString()} 💰)</button>
+            </div>
+            <button style="position: absolute; top: 8px; right: 8px; background: transparent; border: none; color: white; font-size: 18px; cursor: pointer; opacity: 0.7;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7" onclick="dismissBreakdownAlert(${s.row}, ${s.col})">✖</button>
+        </div>
+        `;
+    });
+    overlay.innerHTML = html;
+}
+
+window.dismissBreakdownAlert = function(row, col) {
+    let s = structures.find(st => st.row === row && st.col === col);
+    if (s) {
+        s.alertDismissed = true; // Uyarıyı kullanıcı "gördüm ve kapattım" olarak işaretle
+        updateBreakdownAlerts(); // Ekranı güncelle
+    }
 };
 
 // --- SES MOTORU (Harici dosya gerektirmez, tarayıcıda anlık üretilir; sadece bildirim sesleri) ---
@@ -987,7 +1037,13 @@ function updateUI() {
     // YENİ EKLENEN KISIM: Arayüz güncellendiğinde söküm listesini de güncelle
     if (typeof updateDemolishPanel === 'function') updateDemolishPanel();
 
+    // YENİ EKLENEN KISIM: Arayüz güncellendiğinde söküm listesini de güncelle
+    if (typeof updateDemolishPanel === 'function') updateDemolishPanel();
+    
+    // BUNU YENİ EKLİYORUZ: Arıza bildirimlerini güncelle
+    if (typeof updateBreakdownAlerts === 'function') updateBreakdownAlerts();
 }
+
 
 function buildPlant(type) {
     let capacity = parseInt(document.getElementById('capacityInput').value);
@@ -1347,10 +1403,10 @@ function runTick() {
         if (eligible.length > 0) {
             let picked = eligible[Math.floor(Math.random() * eligible.length)];
             picked.broken = true;
+            picked.alertDismissed = false; // Yeni arıza olduğu için bildirim tekrar aktif edilir
             if (!simulatingOffline) {
-                SoundEngine.error();
-                let pName = plants[picked.type].name, pIcon = plants[picked.type].icon;
-                showAlert(`⚠️ ARIZA!\n\n${pIcon} ${pName} (${picked.capacity} MW, ${picked.zone === 'city' ? 'Şehir' : picked.zone === 'rural' ? 'Kırsal' : 'Orman'}) arıza verdi ve üretimi durdu.\n\nBakım sekmesinden arızayı giderebilirsin.`);
+                if (window.SoundEngine) SoundEngine.error();
+                updateBreakdownAlerts(); // Sağ üstteki dinamik paneli ekrana getir
             }
         }
     }
