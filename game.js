@@ -968,10 +968,22 @@ window.upgradePlantFromList = function(row, col) {
         let extraCost = extraCapacity * plant.costPerMw;
         let extraLand = extraCapacity * plant.landPerMw;
 
-        if (state.budget < extraCost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
+       if (state.budget < extraCost) { SoundEngine.error(); showAlert("Yetersiz Bütçe!"); return; }
         if (d.zone === "city" && (state.land.cityUsed + extraLand > state.land.cityMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
         if (d.zone === "rural" && (state.land.ruralUsed + extraLand > state.land.ruralMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
         if (d.zone === "forest" && (state.land.forestUsed + extraLand > state.land.forestMax)) { SoundEngine.error(); showAlert("Arazi yetersiz!"); return; }
+
+        // --- YENİ: DEPOLAMA KAPASİTESİ KONTROLÜ ---
+        if (d.type === 'battery') {
+            let availableUnstored = state.installed[d.zone][d.batteryTarget] - state.installed[d.zone][d.batteryTarget + 'Storage'];
+            if (extraCapacity > availableUnstored) {
+                if (window.SoundEngine) SoundEngine.error();
+                let targetName = d.batteryTarget === 'solar' ? 'Güneş' : 'Rüzgar';
+                showAlert(`⚠️ Kapasite Sınırı!\n\nŞu anki boşluk: ${availableUnstored} MW\n\nDaha fazla depolama ekleyebilmek için önce o bölgedeki ${targetName} santrallerinin kapasitesini artırmalısın.`);
+                return;
+            }
+        }
+        // ------------------------------------------
 
         const GEN_TYPES_UP = ['coal', 'gas', 'geo', 'hydro', 'solar', 'wind'];
         if (GEN_TYPES_UP.includes(d.type)) {
