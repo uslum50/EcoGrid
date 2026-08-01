@@ -1531,7 +1531,7 @@ function runTick() {
 
     // YENİ: Eksik üretim (şebekeye verilemeyen) hesaplaması ve cezası
     let deficitEnergy = Math.max(0, currentDemand - totalNetProduction);
-    const UNDERPRODUCTION_PENALTY_PER_MWH = 8.0; 
+    const UNDERPRODUCTION_PENALTY_PER_MWH = 10.0; 
     let underproductionCost = deficitEnergy * UNDERPRODUCTION_PENALTY_PER_MWH;
 
     // BÜTÇE GÜNCELLEMESİ
