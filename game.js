@@ -174,7 +174,7 @@ let generalGoal = { type: 'pop', target: 2000, current: 1000, reward: 10000, des
 const plants = {
     gas:     { costPerMw: 1500, emissionPerMw: 0.8, opexPerMw: 3.0, landPerMw: 0.1, allowedInCity: false, name: "Doğalgaz", icon: "🔥", color: 0xe67e22, geometry: 'cylinder', modelPath: 'assets/models/power/gas.glb' },
     coal:    { costPerMw: 2500, emissionPerMw: 1.5, opexPerMw: 1.5, landPerMw: 0.2, allowedInCity: false, name: "Kömür", icon: "🏭", color: 0x34495e, geometry: 'box_tall', modelPath: 'assets/models/power/coal.glb' },
-    geo:     { costPerMw: 3000, emissionPerMw: 0,   opexPerMw: 0.4, landPerMw: 0.5, allowedInCity: false, name: "Jeotermal", icon: "🌋", color: 0xe74c3c, geometry: 'cylinder_low', modelPath: 'assets/models/power/geo.glb' },
+    geo:     { costPerMw: 4000, emissionPerMw: 0,   opexPerMw: 0.4, landPerMw: 0.5, allowedInCity: false, name: "Jeotermal", icon: "🌋", color: 0xe74c3c, geometry: 'cylinder_low', modelPath: 'assets/models/power/geo.glb' },
     hydro:   { costPerMw: 3000, emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 20.0,allowedInCity: false, name: "Hidrolik", icon: "🌊", color: 0x0984e3, geometry: 'box_wide', modelPath: 'assets/models/power/hydro.glb' },
     wind:    { costPerMw: 1800, emissionPerMw: 0,   opexPerMw: 0.45,landPerMw: 10.0,allowedInCity: false, name: "Rüzgar", icon: "🌬️", color: 0xffffff, geometry: 'turbine', modelPath: 'assets/models/power/wind.glb' },
     solar:   { costPerMw: 800,  emissionPerMw: 0,   opexPerMw: 0.15,landPerMw: 3.0, allowedInCity: true,  name: "Güneş", icon: "☀️", color: 0x111111, geometry: 'panel', modelPath: 'assets/models/power/solar.glb' },
@@ -1694,4 +1694,4 @@ function runTick() {
 }
 
 // Döngüyü durdurabilmek için ona bir isim (gameLoop) veriyoruz
-gameLoop = setInterval(runTick, 7000);
+gameLoop = setInterval(runTick, 5000);
