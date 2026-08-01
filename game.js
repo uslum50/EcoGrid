@@ -169,7 +169,7 @@ let structures = []; // Kurulan her tesisin {type, zone, capacity, row, col, bat
 
 // HEDEFLER (GÖREVLER) - 3 Günlük, 1 Genel
 let dailyGoals = [];
-let generalGoal = { type: 'pop', target: 2000, current: 1000, reward: 10000, desc: "Şehir nüfusunu 2000'e ulaştır" };
+let generalGoal = { type: 'pop', target: 1500, current: 1000, reward: 10000, desc: "Şehir nüfusunu 2000'e ulaştır" };
 
 const plants = {
     gas:     { costPerMw: 1500, emissionPerMw: 0.8, opexPerMw: 3.0, landPerMw: 0.1, allowedInCity: false, name: "Doğalgaz", icon: "🔥", color: 0xe67e22, geometry: 'cylinder', modelPath: 'assets/models/power/gas.glb' },
