@@ -1289,14 +1289,16 @@ function getCapacity(type) {
 }
 
 function generateDailyGoal() {
-    let types = ['solar', 'wind', 'battery', 'tree', 'house'];
+    // YENİ: 'house' seçeneği listeden çıkarıldı
+    let types = ['solar', 'wind', 'battery', 'tree'];
     let t = types[Math.floor(Math.random() * types.length)];
     let current = getCapacity(t);
     let add = Math.floor(Math.random() * 3 + 1) * 5; // 5-15 birim arası ekle
     let target = current + add;
-    let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)', house: 'Ev (Blok)'};
     
-    // YENİ: isCompleted: false eklendi
+    // house metni de temizlendi
+    let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)'};
+    
     return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap`, isCompleted: false };
 }
 
