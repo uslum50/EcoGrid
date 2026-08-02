@@ -255,9 +255,11 @@
         }
 
         function toggleSound() {
-            const enabled = window.SoundEngine ? window.SoundEngine.toggle() : true;
-            document.getElementById('soundToggleBtn').innerText = enabled ? '🔊' : '🔇';
-        }
+    const enabled = window.SoundEngine ? window.SoundEngine.toggle() : true;
+    document.getElementById('soundToggleBtn').innerText = enabled ? '🔊' : '🔇';
+    const music = document.getElementById('bgMusic');
+    if (music) { if (enabled) music.play().catch(() => {}); else music.pause(); }
+}
     </script>
     <div id="errorOverlay" style="display:none; position:fixed; top:0; left:0; right:0; background:#c0392b; color:#fff; padding:15px; font-size:13px; z-index:999999; font-family:monospace;"></div>
 <script>
