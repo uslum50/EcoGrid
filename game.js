@@ -40,7 +40,7 @@ function getSolarFactor(hour) {
 
 // Kişi başı saatlik tüketim, güne göre değişir (akşam yüksek, gece düşük, gündüz normal)
 function getCurrentDemandPerPerson() {
-    if (state.hour >= 19 && state.hour < 23) return 0.030; // Akşam: 1000 kişi -> 30 MWh (%20 artırıldı)
+    if (state.hour >= 19 && state.hour < 24) return 0.030; // Akşam: 1000 kişi -> 30 MWh (%20 artırıldı)
     if (state.hour >= 7 && state.hour < 19) return 0.024;  // Gündüz: 1000 kişi -> 24 MWh (%20 artırıldı)
     return 0.018;                                           // Gece: 1000 kişi -> 18 MWh (%20 artırıldı)
 }
@@ -48,7 +48,7 @@ function getCurrentDemandPerPerson() {
 // Zamana göre değişen satış fiyatı (💰/MWh)
 function getCurrentPrice() {
     if (state.hour >= 7 && state.hour < 19) return 5.0;   // Gündüz
-    if (state.hour >= 19 && state.hour < 23) return 7.0;  // Akşam
+    if (state.hour >= 19 && state.hour < 24) return 7.0;  // Akşam
     return 4.0;                                            // Gece (00:00-07:00)
 }
 
