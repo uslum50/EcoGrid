@@ -294,13 +294,28 @@ window.SoundEngine = (function () {
     };
 })();
 
-// Sekme/uygulama arka plana alınınca sesi tamamen kes, öne gelince (kullanıcı kapatmadıysa) devam ettir
+// --- ARKA PLAN MÜZİĞİ (sonicmusic.mp3) - mevcut ses aç/kapa ve arka plan susturma sistemine bağlı ---
+const bgMusic = document.getElementById('bgMusic');
+function tryPlayMusic() {
+    if (bgMusic && window.SoundEngine.isEnabled() && !document.hidden) {
+        bgMusic.play().catch(() => {}); // Tarayıcı otomatik oynatmayı engellerse sessizce geç
+    }
+}
+if (bgMusic) {
+    bgMusic.volume = 0.35;
+    // Tarayıcılar kullanıcı etkileşimi olmadan otomatik oynatmayı engelliyor,
+    // bu yüzden ilk dokunuş/tıklamada başlatıyoruz.
+    document.addEventListener('click', tryPlayMusic, { once: true });
+    document.addEventListener('touchstart', tryPlayMusic, { once: true });
+}
+
+// Sekme/uygulama arka plana alınınca sesi (ve müziği) tamamen kes, öne gelince (kullanıcı kapatmadıysa) devam ettir
 document.addEventListener('visibilitychange', function () {
-    if (document.hidden) window.SoundEngine.suspendForBackground();
-    else window.SoundEngine.resumeFromBackground();
+    if (document.hidden) { window.SoundEngine.suspendForBackground(); if (bgMusic) bgMusic.pause(); }
+    else { window.SoundEngine.resumeFromBackground(); if (bgMusic) tryPlayMusic(); }
 });
-window.addEventListener('blur', function () { window.SoundEngine.suspendForBackground(); });
-window.addEventListener('focus', function () { window.SoundEngine.resumeFromBackground(); });
+window.addEventListener('blur', function () { window.SoundEngine.suspendForBackground(); if (bgMusic) bgMusic.pause(); });
+window.addEventListener('focus', function () { window.SoundEngine.resumeFromBackground(); if (bgMusic) tryPlayMusic(); });
 // YEDEK MEKANİZMA: Bazı WebView sarmalayıcılarında (Appilix/WebIntoApp vb.)
 // visibilitychange/blur olayları arka plana alındığında hiç tetiklenmiyor.
 // Bu yüzden document.hidden durumunu düzenli aralıklarla da kontrol ediyoruz.
@@ -308,8 +323,8 @@ let wasHiddenLastCheck = document.hidden;
 setInterval(function () {
     if (document.hidden !== wasHiddenLastCheck) {
         wasHiddenLastCheck = document.hidden;
-        if (document.hidden) window.SoundEngine.suspendForBackground();
-        else window.SoundEngine.resumeFromBackground();
+        if (document.hidden) { window.SoundEngine.suspendForBackground(); if (bgMusic) bgMusic.pause(); }
+        else { window.SoundEngine.resumeFromBackground(); if (bgMusic) tryPlayMusic(); }
     }
 }, 1000); // her 1 saniyede bir kontrol et
 
