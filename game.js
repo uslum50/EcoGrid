@@ -1324,7 +1324,7 @@ function generateDailyGoalSet() {
         let add = Math.floor(Math.random() * 3 + 1) * 5;
         let target = current + add;
         let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)'};
-        return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap`, isCompleted: false };
+        return { type: t, target: target, reward: add * 200, desc: `${names[t]} kapasiteni ${target} yap`, isCompleted: false };
     });
 }
 
