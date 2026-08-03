@@ -605,16 +605,17 @@ function loadGame() {
     let elapsedSeconds = (Date.now() - (data.savedAt || Date.now())) / 1000;
     let ticksToSimulate = Math.min(Math.floor(elapsedSeconds / 2.5), 400); // ~16 güne kadar telafi
     if (ticksToSimulate > 1) {
-        simulatingOffline = true;
-        let startBudget = state.budget;
-        dailyLoginRewardGrantedDuringCatchup = false;
-        for (let i = 0; i < ticksToSimulate; i++) runTick();
-        simulatingOffline = false;
-        let deltaBudget = Math.floor(state.budget - startBudget);
-        setTimeout(() => {
-            showAlert(`⏱️ Uzaktayken geçen sürede şebeke ${ticksToSimulate} saat çalıştı.\nKasa değişimi: ${deltaBudget >= 0 ? '+' : ''}${deltaBudget.toLocaleString()} 💰\nNüfus: ${Math.floor(state.population)} kişi`);
-        }, 400);
-    }
+    simulatingOffline = true;
+    let startBudget = state.budget;
+    dailyLoginRewardGrantedDuringCatchup = false;
+    for (let i = 0; i < ticksToSimulate; i++) runTick();
+    simulatingOffline = false;
+    let deltaBudget = Math.floor(state.budget - startBudget);
+    let loginRewardLine = dailyLoginRewardGrantedDuringCatchup ? `\n\n🎁 Günlük giriş ödülü: +1.000 💰 (dahil edildi)` : '';
+    setTimeout(() => {
+        showAlert(`⏱️ Uzaktayken geçen sürede şebeke ${ticksToSimulate} saat çalıştı.\nKasa değişimi: ${deltaBudget >= 0 ? '+' : ''}${deltaBudget.toLocaleString()} 💰\nNüfus: ${Math.floor(state.population)} kişi${loginRewardLine}`);
+    }, 400);
+}
     return true;
 }
 
@@ -1304,30 +1305,42 @@ function getCapacity(type) {
 }
 
 function generateDailyGoal() {
-    // YENİ: 'house' seçeneği listeden çıkarıldı
     let types = ['solar', 'wind', 'battery', 'tree'];
     let t = types[Math.floor(Math.random() * types.length)];
     let current = getCapacity(t);
-    let add = Math.floor(Math.random() * 3 + 1) * 5; // 5-15 birim arası ekle
+    let add = Math.floor(Math.random() * 3 + 1) * 5;
     let target = current + add;
-    
-    // house metni de temizlendi
     let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)'};
-    
     return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap`, isCompleted: false };
 }
 
-// Oyuna başlarken 3 görev oluştur
-dailyGoals = [generateDailyGoal(), generateDailyGoal(), generateDailyGoal()];
+// YENİ: 3 görev üretir ama aynı tipten iki tane çıkmasına izin vermez
+function generateDailyGoalSet() {
+    let types = ['solar', 'wind', 'battery', 'tree'];
+    let shuffled = types.slice().sort(() => Math.random() - 0.5);
+    let chosen = shuffled.slice(0, 3);
+    return chosen.map(t => {
+        let current = getCapacity(t);
+        let add = Math.floor(Math.random() * 3 + 1) * 5;
+        let target = current + add;
+        let names = {solar: 'Güneş (MW)', wind: 'Rüzgar (MW)', battery: 'Depolama (MW)', tree: 'Ağaç (Birim)'};
+        return { type: t, target: target, reward: add * 100, desc: `${names[t]} kapasiteni ${target} yap`, isCompleted: false };
+    });
+}
+
+// Sadece kayıtlı görev yoksa (yeni oyun) 3 görev oluştur - sayfa yenilenince ezmesin
+if (!dailyGoals || dailyGoals.length === 0) {
+    dailyGoals = generateDailyGoalSet();
+}
 
 function checkGoals() {
     // 1200 döngüde bir (yaklaşık 1 gün) tüm günlük görevleri yenile
     state.dailyGoalTicks = (state.dailyGoalTicks || 0) + 1;
     if (state.dailyGoalTicks >= 1200) {
-        dailyGoals = [generateDailyGoal(), generateDailyGoal(), generateDailyGoal()];
-        state.dailyGoalTicks = 0;
-        if (!simulatingOffline) showAlert("📅 Yeni bir gün başladı! Günlük görevler yenilendi.");
-    }
+    dailyGoals = generateDailyGoalSet();
+    state.dailyGoalTicks = 0;
+    if (!simulatingOffline) showAlert("📅 Yeni bir gün başladı! Günlük görevler yenilendi.");
+}
 
     let container = document.getElementById('daily-goals-container');
     let html = "";
