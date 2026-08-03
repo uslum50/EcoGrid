@@ -302,7 +302,7 @@ function tryPlayMusic() {
     }
 }
 if (bgMusic) {
-    bgMusic.volume = 0.35;
+    bgMusic.volume = 0.15;
     // Tarayıcılar kullanıcı etkileşimi olmadan otomatik oynatmayı engelliyor,
     // bu yüzden ilk dokunuş/tıklamada başlatıyoruz.
     document.addEventListener('click', tryPlayMusic, { once: true });
